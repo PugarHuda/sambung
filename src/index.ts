@@ -10,7 +10,7 @@ import {
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
-import { getPlayer } from '@dcl/sdk/players'
+import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { triggerEmote } from '~system/RestrictedActions'
 import { EMOTES, State, newState, tap, tick, adopt, litIndex, SHOW_STEP } from './game.ts'
 import {
@@ -22,6 +22,7 @@ import {
   demoAdvance,
   shouldPlayDemo
 } from './record.ts'
+import { REQUEST_TIMEOUT_MS, withRetry } from './net.ts'
 import { setupUi } from './ui.tsx'
 import { spikeAvatar } from './spike-avatar.ts' // SPIKE: remove with the file
 
@@ -47,6 +48,14 @@ const bus = new MessageBus()
  * watcher in main().
  */
 let authors: { user: string; name: string }[] = []
+
+/**
+ * Everyone else currently in the scene.
+ *
+ * Kept because a chain is only broadcast when somebody extends it, so before
+ * this a player who walked in mid-round saw an empty stage until the next tap.
+ */
+const others = new Set<string>()
 let known: Snapshot = EMPTY
 
 let ticker = 'Chain up an emote, then dare the next player to repeat it.'
@@ -98,10 +107,43 @@ function note(what: string, err: unknown) {
   console.error(`[sambung] ${what}:`, err instanceof Error ? err.message : String(err))
 }
 
+/** The scene runtime provides setTimeout, so backoff is a real wait, not a spin. */
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+/**
+ * One attempt at the endpoint, retried only when retrying could help.
+ *
+ * A transport failure or a 5xx may pass; a 4xx is our own malformed request and
+ * would fail identically three times. The scene's fetch defaults to a 30 second
+ * timeout, which is far too long to leave a visitor's record hanging, so every
+ * call carries its own.
+ */
+async function callRecordApi(init?: {
+  method: string
+  headers: Record<string, string>
+  body: string
+}) {
+  return withRetry(async () => {
+    const res = await fetch(`${RECORD_API}?world=${WORLD}`, {
+      ...init,
+      timeout: REQUEST_TIMEOUT_MS
+    })
+    if (res.status >= 500) throw new Error(`HTTP ${res.status}`)
+    return res
+  }, sleep)
+}
+
 async function loadRecord() {
   if (!RECORD_API) return
   try {
-    const res = await fetch(`${RECORD_API}?world=${WORLD}`)
+    const res = await callRecordApi()
+    if (!res.ok) {
+      note('the record endpoint refused the read', `HTTP ${res.status}`)
+      return
+    }
     const snap = parseSnapshot(await res.json())
     if (!snap) {
       // A 200 that fails validation means the endpoint changed shape under us,
@@ -125,11 +167,12 @@ async function loadRecord() {
 async function postRecord(snap: Snapshot) {
   if (!RECORD_API) return
   try {
-    await fetch(`${RECORD_API}?world=${WORLD}`, {
+    const res = await callRecordApi({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(snap)
     })
+    if (!res.ok) note('the record endpoint refused the write', `HTTP ${res.status}`)
   } catch (err) {
     // Losing one record post is survivable. Blocking the game on it is not.
     note('could not publish the record', err)
@@ -298,12 +341,43 @@ function clearMobileHud() {
   })
 }
 
+/** Tell the room who just walked in, and hand them the chain in progress. */
+function watchArrivals() {
+  onEnterScene((player) => {
+    if (player.userId === myId().user) return
+    others.add(player.userId)
+    ticker =
+      others.size === 1
+        ? `${player.name} just arrived. Chain together.`
+        : `${player.name} joined — ${others.size} others here.`
+
+    // Re-broadcast so the newcomer adopts the round already under way instead of
+    // waiting for the next tap. adopt() ignores anything not longer than what a
+    // client already holds, so the duplicate emits from several players converge.
+    // ponytail: every present player answers an arrival. Fine at party size; if a
+    // crowd ever shows up, elect one answerer instead.
+    if (state.chain.length > 0) {
+      bus.emit('chain', {
+        chain: state.chain,
+        authors,
+        by: me(),
+        label: EMOTES[state.chain[state.chain.length - 1] ?? 0]?.label ?? ''
+      })
+    }
+  })
+
+  onLeaveScene((userId) => {
+    others.delete(userId)
+  })
+}
+
 export function main() {
   spikeAvatar() // SPIKE: remove with the file
   clearMobileHud()
   buildStage()
   setupUi({ state, highlight, ticker: () => ticker, onTap })
 
+  watchArrivals()
   void loadRecord() // never awaited: the scene must be playable before this lands
 
   bus.on(

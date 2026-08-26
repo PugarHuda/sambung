@@ -44,6 +44,32 @@ function isoWeek(at: Date): string {
   return `${thursdayYear}-W${String(week).padStart(2, '0')}`
 }
 
+/** How many stored versions a single read will reconcile across. */
+const MAX_VERSIONS = 12
+
+/** The longer of two runs. Ties keep the first, which keeps the reduce stable. */
+function longer(a: Stint, b: Stint): Stint {
+  return b.record > a.record ? b : a
+}
+
+/**
+ * Combine two stored versions into the best of both.
+ *
+ * The season is taken from whichever version is in the newer week, so a rollover
+ * cannot be undone by an older write that still carries last week's target.
+ */
+function mergeStored(a: Stored, b: Stored): Stored {
+  const season = a.season >= b.season ? a.season : b.season
+  const weekOf = (v: Stored) => (v.season === season ? v.week : NO_STINT)
+  const best = longer(a, b)
+  return {
+    record: best.record,
+    chain: best.chain,
+    season,
+    week: longer(weekOf(a), weekOf(b))
+  }
+}
+
 // Mirrors src/record.ts. Deliberately duplicated rather than shared: the scene
 // and the endpoint deploy separately, and a validator you cannot see from the
 // server is a validator you cannot trust.
@@ -105,19 +131,47 @@ function store() {
         // reads even with cache busting - object stores do not promise
         // read-after-write on replace, only on create.
         const found = await list({ prefix: `${key}/` })
-        const newest = found.blobs.reduce<(typeof found.blobs)[number] | null>(
-          (best, b) => (!best || b.uploadedAt > best.uploadedAt ? b : best),
-          null
-        )
-        if (!newest) return fresh
-        const r = await fetch(newest.url, { cache: 'no-store' })
-        if (!r.ok) return fresh
-        const parsed = parseStored(await r.json(), now) ?? fresh
-        // Older versions are litter; dropping them keeps the listing small and
-        // the next read cheap. Best effort - a failed cleanup must not fail a read.
-        const stale = found.blobs.filter((b) => b.url !== newest.url).map((b) => b.url)
-        if (stale.length) void del(stale).catch(() => undefined)
-        return parsed
+        if (found.blobs.length === 0) return fresh
+
+        // Newest first, and only ever a handful: pruning below keeps it that way.
+        const versions = [...found.blobs]
+          .sort((a, b) => (a.uploadedAt > b.uploadedAt ? -1 : 1))
+          .slice(0, MAX_VERSIONS)
+
+        const parsed: Array<{ url: string; value: Stored }> = []
+        for (const blob of versions) {
+          const r = await fetch(blob.url, { cache: 'no-store' })
+          if (!r.ok) continue
+          const value = parseStored(await r.json(), now)
+          if (value) parsed.push({ url: blob.url, value })
+        }
+        if (parsed.length === 0) return fresh
+
+        // Two players who beat the record at the same moment both read the old
+        // value, both believe they won, and the later write used to erase the
+        // better one - measured as a lost update on 3 of 6 concurrent rounds.
+        // The record is a maximum, and a maximum does not care what order it
+        // arrives in, so reads reduce rather than pick.
+        const merged = parsed.map((p) => p.value).reduce(mergeStored)
+
+        // Keep whichever versions actually supply the surviving numbers, and
+        // only drop the rest. An earlier attempt pruned by "is dominated by the
+        // merge", which is true of the winner too - reading once deleted the
+        // record and left the seed behind.
+        const keep = new Set<string>()
+        keep.add(parsed.reduce((best, p) => (p.value.record > best.value.record ? p : best)).url)
+        const thisSeason = parsed.filter((p) => p.value.season === merged.season)
+        if (thisSeason.length > 0) {
+          keep.add(
+            thisSeason.reduce((best, p) =>
+              p.value.week.record > best.value.week.record ? p : best
+            ).url
+          )
+        }
+        const spent = parsed.filter((p) => !keep.has(p.url)).map((p) => p.url)
+        if (spent.length > 0) void del(spent).catch(() => undefined)
+
+        return merged
       } catch {
         // An unreachable or corrupt store reads as an empty world rather than a
         // 500, so the scene keeps playing on its local record.
