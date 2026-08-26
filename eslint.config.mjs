@@ -50,6 +50,14 @@ export default tseslint.config(
     }
   },
   {
+    // Build scripts run in Node, not in the scene runtime, so they need Node's
+    // globals declared rather than inherited from the DCL type package.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { console: 'readonly', process: 'readonly', URL: 'readonly' }
+    }
+  },
+  {
     // node:test's test() returns a promise that is never meant to be awaited;
     // flagging every case here would train us to ignore the rule everywhere else.
     files: ['src/**/*.test.ts'],

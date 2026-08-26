@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "dupes": "jscpd src server e2e --min-lines 5 --min-tokens 50 --reporters console --format typescript,tsx"
+    "dupes": "jscpd src server e2e --min-lines 5 --min-tokens 50 --reporters console --format typescript,tsx",
+    "budget": "node scripts/scene-budget.mjs"
   },
   "devDependencies": {
     "@dcl/js-runtime": "7.26.0",

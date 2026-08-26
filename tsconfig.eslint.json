@@ -3,8 +3,10 @@
   "compilerOptions": {
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "types": ["@dcl/js-runtime", "node"]
+    "types": ["@dcl/js-runtime", "node"],
+    "allowJs": true,
+    "checkJs": false
   },
   "exclude": [],
-  "include": ["src", "e2e", "server", "*.ts", "*.mjs"]
+  "include": ["src", "e2e", "server", "scripts", "*.ts", "*.mjs"]
 }
