@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": ["@dcl/js-runtime", "node"]
+  },
+  "exclude": [],
+  "include": ["src", "e2e", "server", "*.ts", "*.mjs"]
+}

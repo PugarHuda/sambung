@@ -1,0 +1,46 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "Sambung",
+    "description": "One thumb, eight pads. Repeat the chain everyone before you built, then beat the record.",
+    "navmapThumbnail": "images/thumbnail.png"
+  },
+  "scene": {
+    "parcels": ["0,0"],
+    "base": "0,0"
+  },
+  "main": "bin/index.js",
+  "tags": ["game", "social", "mobile", "party"],
+  "spawnPoints": [
+    {
+      "name": "center",
+      "default": true,
+      "position": {
+        "x": 8,
+        "y": 0.3,
+        "z": 8
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1.5,
+        "z": 12
+      }
+    }
+  ],
+  "worldConfiguration": {
+    "name": "RainbowRoad.dcl.eth",
+    "skyboxConfig": {
+      "fixedTime": 79200
+    },
+    "miniMapConfig": {
+      "visible": false
+    }
+  },
+  "requiredPermissions": ["ALLOW_TO_TRIGGER_AVATAR_EMOTE", "USE_FETCH"],
+  "owner": "Lynx",
+  "contact": {
+    "name": "Lynx",
+    "im": "hajislamet (Discord)"
+  }
+}

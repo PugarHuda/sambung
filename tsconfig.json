@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "lib": ["ES2020"],
+    "target": "ES2020",
+    "module": "ES2020",
+    "moduleResolution": "node",
+    "jsx": "react",
+    "jsxFactory": "ReactEcs.createElement",
+    "jsxFragmentFactory": "ReactEcs.Fragment",
+    "types": ["@dcl/js-runtime"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

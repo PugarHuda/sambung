@@ -1,0 +1,38 @@
+# A custom .dclignore REPLACES the defaults, so the default patterns are repeated
+# here. Everything below "# ours" is what this project adds.
+.*
+package.json
+package-lock.json
+yarn-lock.json
+build.json
+export
+tsconfig.json
+tslint.json
+node_modules
+*.ts
+*.tsx
+dist
+
+# ours
+# The record endpoint deploys to Vercel, not into the World — and `vercel link`
+# leaves BLOB_READ_WRITE_TOKEN in server/.env.local. A scene deploy uploads this
+# folder to a public content server, so this line is a credential guard.
+server
+server/**
+.env
+.env.*
+**/.env.*
+.vercel
+**/.vercel/**
+# Creator Hub's Inspector writes editor artifacts here. Its default metadata says
+# "Test Scene" and daytime skybox, which contradicts scene.json — this scene is
+# built entirely in code, so those artifacts must never reach the content server.
+*.composite
+.editor
+assets/scene/main.composite
+# Playwright lives in the repo, never in the World.
+e2e
+playwright.config.ts
+playwright-report
+test-results
+

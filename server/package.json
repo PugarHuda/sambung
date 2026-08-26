@@ -1,0 +1,12 @@
+{
+  "name": "sambung-record",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Record store for the Sambung scene. Deployed separately from the DCL scene.",
+  "dependencies": {
+    "@vercel/blob": "^2.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0"
+  }
+}

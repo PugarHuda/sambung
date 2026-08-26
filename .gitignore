@@ -1,0 +1,21 @@
+node_modules/
+bin/
+*.log
+.DS_Store
+
+# Build and test artefacts
+test-results/
+playwright-report/
+.playwright-mcp/
+
+# Credentials and machine-local state. server/.env.local carries the Blob
+# read-write token; it must never enter history.
+.env
+.env.*
+server/.vercel/
+.vercel/
+
+# Creator Hub's Inspector artefacts. Its defaults say "Test Scene" and would
+# fight scene.json if they came back.
+.editor/
+assets/scene/main.composite
