@@ -43,3 +43,7 @@ test-results
 *.mjs
 *.cjs
 .jscpd.json
+
+# Generated SDK reference for AI tooling (see .gitignore). Not scene content.
+dclcontext
+dclcontext/**
