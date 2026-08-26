@@ -7,6 +7,7 @@ yarn-lock.json
 build.json
 export
 tsconfig.json
+tsconfig.*.json
 tslint.json
 node_modules
 *.ts
@@ -36,3 +37,9 @@ playwright.config.ts
 playwright-report
 test-results
 
+# Tooling config is not scene content. The default list names tsconfig.json
+# exactly, so variants and .mjs configs slip through and end up on the public
+# content server.
+*.mjs
+*.cjs
+.jscpd.json
