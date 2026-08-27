@@ -8,7 +8,7 @@
     "build": "sdk-commands build",
     "deploy": "sdk-commands deploy --target-content https://worlds-content-server.decentraland.org",
     "test": "node --test src/*.test.ts",
-    "test:e2e": "playwright test --project=chromium --project=firefox --project=webkit --project=mobile-chrome --project=mobile-safari",
+    "test:e2e": "playwright test --project=abuse",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

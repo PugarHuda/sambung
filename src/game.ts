@@ -16,6 +16,15 @@ export const SHOW_STEP = 0.75 // seconds each emote stays lit during playback
 /** Below this the pads blur together and the chain stops being readable. */
 export const MIN_SHOW_STEP = 0.32
 /**
+ * How much of each playback step the pad is actually lit for.
+ *
+ * The rest is dark on purpose. Without a gap, the same pad twice in a row -
+ * [3, 3] - showed as one long light and one note, and a player who repeated it
+ * once was told they missed. Simon has always had this gap; it is what makes a
+ * repeated note countable.
+ */
+export const LIT_FRACTION = 0.65
+/**
  * What the whole world does when somebody beats the record.
  *
  * Verified against the catalyst as a real base emote by the live-world suite: a
@@ -59,7 +68,9 @@ export function showStep(chainLength: number): number {
 }
 
 export function litIndex(s: State): number {
-  return s.phase === 'showing' ? (s.chain[s.cursor] ?? -1) : -1
+  if (s.phase !== 'showing') return -1
+  if (s.timer >= showStep(s.chain.length) * LIT_FRACTION) return -1
+  return s.chain[s.cursor] ?? -1
 }
 
 export type TapResult = 'ignored' | 'correct' | 'completed' | 'added' | 'missed'

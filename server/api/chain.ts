@@ -36,6 +36,52 @@ const DEFAULT_WORLD = 'rainbowroad.dcl.eth'
  */
 const WEEK_TTL_SECONDS = 60 * 60 * 24 * 21
 
+/**
+ * Worlds whose all-time record is kept forever.
+ *
+ * Anyone can name a world in the query string, and every name costs two keys.
+ * The one the scene is deployed to is permanent; anything else - a preview, a
+ * test run, a stranger poking the URL - ages out unless it keeps being played.
+ */
+const PERMANENT_WORLDS = new Set([DEFAULT_WORLD])
+const OTHER_WORLD_TTL_SECONDS = 60 * 60 * 24 * 30
+
+/**
+ * Writes a single caller may make per minute.
+ *
+ * Every write costs store commands, and the store's monthly allowance is what
+ * keeps the record alive during judging - the previous store was lost exactly
+ * this way. A person cannot set a record five times a second; a loop can. The
+ * suite in e2e/ runs five browsers in parallel from one address and stays under.
+ *
+ * ponytail: per instance, in memory. Fluid compute reuses instances, so this
+ * holds against one loud source; a flood spread across many addresses is the
+ * store's own quota's problem. A shared counter would cost a command per check,
+ * which is the thing being rationed.
+ */
+const WRITES_PER_MINUTE = 300
+const writes = new Map<string, { count: number; until: number }>()
+
+function overWriteLimit(ip: string, now: number): boolean {
+  const slot = writes.get(ip)
+  if (!slot || slot.until <= now) {
+    writes.set(ip, { count: 1, until: now + 60_000 })
+    // Forgetting old callers here keeps the map from growing for the life of
+    // the instance; a sweep on every write is cheap at this scale.
+    for (const [key, v] of writes) if (v.until <= now) writes.delete(key)
+    return false
+  }
+  slot.count++
+  return slot.count > WRITES_PER_MINUTE
+}
+
+/** The caller's address as Vercel reports it; empty on a bare local run. */
+function callerOf(req: IncomingMessage): string {
+  const fwd = req.headers['x-forwarded-for']
+  const first = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim()
+  return first ?? req.socket.remoteAddress ?? ''
+}
+
 type Link = { emote: number; user: string; name: string }
 type Stint = { record: number; chain: Link[] }
 type Reply = Stint & { week: Stint }
@@ -174,7 +220,6 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // A day of preflight caching: the scene posts rarely, but every post it does
   // make would otherwise pay for an OPTIONS round trip first.
   res.setHeader('Access-Control-Max-Age', '86400')
-  res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Content-Type', 'application/json')
 
   const send = (status: number, body: unknown) => {
@@ -204,6 +249,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   if (req.method === 'GET') {
+    // Held at the edge for a few seconds. The scene reads once on arrival and a
+    // record a few seconds stale is invisible, while a burst of reads - a crowd
+    // arriving together, or somebody hammering the URL - becomes one function
+    // call instead of one per reader. Writes below are never cached.
+    res.setHeader('Cache-Control', 'public, s-maxage=3, stale-while-revalidate=10')
     try {
       return send(200, await read())
     } catch {
@@ -214,6 +264,11 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   }
 
   if (req.method === 'POST') {
+    res.setHeader('Cache-Control', 'no-store')
+    if (overWriteLimit(callerOf(req), now.getTime())) {
+      res.setHeader('Retry-After', '60')
+      return send(429, { error: 'too many records from one place' })
+    }
     let incoming: Stint | null
     try {
       incoming = parseStint(JSON.parse(await readBody(req)))
@@ -230,6 +285,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       // Refreshed on every write, so a week that is still being played stays
       // alive and one that nobody touches ages out on its own.
       pipeline.expire(weekKey, WEEK_TTL_SECONDS)
+      if (!PERMANENT_WORLDS.has(key.slice(KEY_PREFIX.length + 1))) {
+        pipeline.expire(key, OTHER_WORLD_TTL_SECONDS)
+      }
       await pipeline.exec()
       return send(200, await read())
     } catch {

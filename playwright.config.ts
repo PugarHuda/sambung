@@ -5,6 +5,8 @@ import { defineConfig, devices } from '@playwright/test'
 // different world and made the suite flake.
 
 const LIVE_WORLD = '**/deployed-world.spec.ts'
+const ABUSE = '**/abuse.spec.ts'
+const BROWSERS = ['chromium', 'firefox', 'webkit', 'mobile-chrome', 'mobile-safari']
 
 export default defineConfig({
   testDir: './e2e',
@@ -22,9 +24,9 @@ export default defineConfig({
     // The endpoint suites run in every engine on purpose: CORS, preflight and
     // fetch semantics differ between them, and the scene's own fetch is closest
     // to none of them - so the widest net is the honest one.
-    ...['chromium', 'firefox', 'webkit', 'mobile-chrome', 'mobile-safari'].map((name, i) => ({
+    ...BROWSERS.map((name, i) => ({
       name,
-      testIgnore: LIVE_WORLD,
+      testIgnore: [LIVE_WORLD, ABUSE],
       use: {
         ...[
           devices['Desktop Chrome'],
@@ -35,6 +37,15 @@ export default defineConfig({
         ][i]
       }
     })),
+    // The write-limit flood. Last, and alone: it spends the per-caller budget
+    // that every other project here shares, so nothing may run beside or after
+    // it within the same minute.
+    {
+      name: 'abuse',
+      testMatch: ABUSE,
+      dependencies: BROWSERS,
+      use: { ...devices['Desktop Chrome'] }
+    },
     // Assertions about the deployed World, which are only true after a deploy.
     // Kept out of the default run and out of CI; `npm run verify` is the caller.
     { name: 'deployed', testMatch: LIVE_WORLD, use: { ...devices['Desktop Chrome'] } }

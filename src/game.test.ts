@@ -9,6 +9,7 @@ import {
   litIndex,
   parseChain,
   showStep,
+  LIT_FRACTION,
   MAX_LIVE_CHAIN,
   SHOW_STEP,
   MIN_SHOW_STEP,
@@ -197,4 +198,24 @@ test('a long chain still finishes playback and hands over the turn', () => {
   for (let frame = 0; frame < 60 * 30 && s.phase !== 'input'; frame++) tick(s, 1 / 60)
   assert.equal(s.phase, 'input')
   assert.equal(s.cursor, 0)
+})
+
+test('the same pad twice in a row reads as two flashes, not one long one', () => {
+  const s = newState()
+  adopt(s, [3, 3])
+  const step = showStep(2)
+  // Lit at the start of the first step, dark before it ends, lit again at the
+  // start of the second: three transitions a player can count.
+  assert.equal(litIndex(s), 3)
+  tick(s, step * LIT_FRACTION)
+  assert.equal(litIndex(s), -1, 'the pad must go dark inside the step')
+  tick(s, step * (1 - LIT_FRACTION))
+  assert.equal(s.cursor, 1)
+  assert.equal(litIndex(s), 3, 'and light again for the second link')
+})
+
+test('the gap never swallows a whole step at the fastest speed', () => {
+  // A fraction is only a gap if there is still a lit part left at the floor.
+  assert.ok(MIN_SHOW_STEP * LIT_FRACTION > 0.15, 'lit for too short to see')
+  assert.ok(MIN_SHOW_STEP * (1 - LIT_FRACTION) > 0.08, 'dark for too short to count')
 })

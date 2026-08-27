@@ -25,7 +25,8 @@ import {
   adopt,
   litIndex,
   parseChain,
-  showStep
+  showStep,
+  LIT_FRACTION
 } from './game.ts'
 import {
   Snapshot,
@@ -282,7 +283,12 @@ function tickDemo(dt: number): boolean {
 }
 
 function highlight(): number {
-  if (demoRunning()) return known.chain[demoIdx]?.emote ?? -1
+  if (demoRunning()) {
+    // The same gap the game keeps, so a record with a repeated pad replays as
+    // the two notes it is.
+    if (demoTimer >= showStep(known.chain.length) * LIT_FRACTION) return -1
+    return known.chain[demoIdx]?.emote ?? -1
+  }
   const shown = litIndex(state)
   if (shown >= 0) return shown
   return flashTimer > 0 ? flashIdx : -1
@@ -411,6 +417,7 @@ function onTap(i: number) {
       void triggerEmote({ predefinedEmote: CHEER_EMOTE })
       ticker = `${me()} set the record at ${mine.record}.`
       known = betterOf(known, mine)
+      bus.emit('record', mine)
     }
     if (beatsAllTime || beatsWeek) void postRecord(mine)
   } else if (result === 'missed') {
@@ -549,12 +556,28 @@ export function main() {
       return
     }
     if (!adopt(state, chain)) return
+    // A live round outranks the opening replay: without this the adopted chain
+    // sat behind the demo, and the newcomer watched a record while the room was
+    // already playing.
+    stopDemo()
     // Authors travel with the chain, or the record we later store would credit
     // the wrong people.
     authors = parseAuthors(m.authors, chain.length)
     const by = clampText(m.by) || 'Someone'
     const label = clampText(m.label, 12) || 'an emote'
     ticker = `${by} added ${label} — chain is ${state.chain.length}`
+  })
+
+  // A record set by somebody else in the room. Without this every other client
+  // kept the stale number until their next visit, and could then announce
+  // themselves as record holder for a run the endpoint would refuse.
+  bus.on('record', (msg: unknown) => {
+    const snap = parseSnapshot(msg)
+    if (!snap || snap.record <= known.record) return
+    known = betterOf(known, snap)
+    if (known.record > state.record) state.record = known.record
+    const by = snap.chain[snap.chain.length - 1]?.name ?? 'Someone'
+    ticker = `${by} set the record at ${snap.record}.`
   })
 
   // A season ends inside tick(), not on a tap, so watch for the chain emptying.
