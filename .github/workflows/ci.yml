@@ -47,6 +47,14 @@ jobs:
       - name: Scene stays inside the mobile budget
         run: node scripts/scene-budget.mjs
 
+      # The audio the world ships is generated, not hand-made, so the committed
+      # file must be exactly what the generator produces. A drift here means
+      # someone edited the asset instead of the source of the asset.
+      - name: The shipped audio still matches its generator
+        run: |
+          npm run sound
+          git diff --exit-code sounds/
+
   e2e:
     name: End-to-end against the live endpoint
     # Only on main and on demand: every run writes real records to the blob
@@ -61,7 +69,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium firefox webkit
-      - run: npx playwright test
+      # The deployed-world project is deliberately excluded: it asserts things
+      # about the live World that are only true after a deploy, and CI does not
+      # deploy. `npm run verify` is what runs it.
+      - run: npm run test:e2e
       - uses: actions/upload-artifact@v5
         if: failure()
         with:

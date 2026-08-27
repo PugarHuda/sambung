@@ -10,7 +10,7 @@
 // budgeting and are reported as an estimate. The authority on the real number is
 // the client's own metrics panel, which needs the Explorer to read.
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { EMOTES } from '../src/game.ts'
 
@@ -24,6 +24,16 @@ const TRIANGLES = { setBox: 12, setPlane: 2, setSphere: 512, setCylinder: 96 }
 
 /** Mobile's hard limit. Loading is refused above this. */
 const HARD_LIMIT = 1_200_000
+
+/**
+ * The whole audio budget, in bytes.
+ *
+ * The scene ships one clip and pitches it eight ways (src/audio.ts), so this
+ * ceiling is deliberately tight: it is the number that stops "one more sound"
+ * from turning into a megabyte of samples on a mobile connection.
+ */
+const MAX_AUDIO_BYTES = 32 * 1024
+const SOUNDS = 'sounds'
 
 /**
  * How many of each primitive the scene actually renders.
@@ -53,7 +63,10 @@ const banned = [
   },
   { pattern: /\.glb\b|\.gltf\b/, why: 'a .glb/.gltf reference' },
   { pattern: /\.png\b|\.jpg\b|\.jpeg\b/, why: 'a texture reference in scene code' },
-  { pattern: /AudioSource|AudioStream/, why: 'audio, which the scene does not ship' }
+  {
+    pattern: /AudioStream/,
+    why: 'AudioStream - streamed audio needs a media hostname and a live server'
+  }
 ]
 for (const { pattern, why } of banned) {
   const hit = pattern.exec(source)
@@ -72,6 +85,23 @@ for (const m of source.matchAll(/MeshRenderer\.(\w+)/g)) {
   if (!(m[1] in TRIANGLES)) failures.push(`unknown MeshRenderer.${m[1]} - add its cost here`)
 }
 
+// 2b. Audio: allowed, but weighed. Every clip the source names must exist, or
+// the scene ships a silent pad and says nothing about it.
+const clips = existsSync(SOUNDS) ? readdirSync(SOUNDS).filter((f) => !f.startsWith('.')) : []
+let audioBytes = 0
+for (const clip of clips) audioBytes += statSync(join(SOUNDS, clip)).size
+if (audioBytes > MAX_AUDIO_BYTES) {
+  failures.push(`${audioBytes} bytes of audio, ceiling is ${MAX_AUDIO_BYTES}`)
+}
+for (const m of source.matchAll(/['`](sounds\/[\w.-]+)['`]/g)) {
+  if (!existsSync(m[1])) failures.push(`${m[1]} is referenced by the scene but not in the repo`)
+}
+for (const clip of clips) {
+  if (!source.includes(`${SOUNDS}/${clip}`)) {
+    failures.push(`${SOUNDS}/${clip} ships to the world but nothing plays it`)
+  }
+}
+
 // 3. Add it up.
 let estimated = 0
 for (const [call, n] of Object.entries(RENDERED)) estimated += n * TRIANGLES[call]
@@ -88,7 +118,9 @@ for (const [call, n] of Object.entries(RENDERED)) {
 }
 console.log(`  ${rendered} rendered primitives, ceiling ${MAX_RENDERED}`)
 console.log(`  estimated ~${estimated} tri = ${share}% of the ${HARD_LIMIT} hard limit`)
-console.log('  imported models: none | textures in scene code: none | audio: none')
+const audioLine =
+  clips.length === 0 ? 'none' : `${clips.length} clip(s), ${(audioBytes / 1024).toFixed(1)} KB`
+console.log(`  imported models: none | textures in scene code: none | audio: ${audioLine}`)
 
 if (failures.length > 0) {
   console.error('\nBudget broken:')

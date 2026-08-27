@@ -11,7 +11,9 @@ import { test, expect, Page, TestInfo } from '@playwright/test'
 // an ordered history performs that whole history itself rather than leaning on
 // its neighbours.
 
-const API = 'https://sambung-dcl.vercel.app/api/chain'
+// The deployed endpoint by default. Overridable so the same suite can be pointed
+// at a preview deployment before it is aliased into production.
+const API = process.env.SAMBUNG_API ?? 'https://sambung-dcl.vercel.app/api/chain'
 const ORIGIN = 'https://sambung-e2e.test'
 
 function urlFor(testInfo: TestInfo, slug: string): string {
@@ -207,5 +209,73 @@ test.describe('record endpoint', () => {
     }
     expect(read.chain[0].name).toBe('Ayu \u{1F319} まりあ')
     expect(read.chain[1].name.length).toBe(40)
+  })
+})
+
+test.describe('the record under pressure', () => {
+  test('simultaneous winners cannot erase each other', async ({ page }, testInfo) => {
+    await onOrigin(page)
+    const url = urlFor(testInfo, 'concurrent')
+
+    // Six players finish at the same moment. Each one read an empty world, so
+    // each believes it set the record, and all six writes land together. This is
+    // not hypothetical: it was measured as a lost update on 3 of 6 rounds - a
+    // record of 9 erased by a slower 3 - before reads started reconciling by
+    // maximum instead of by recency.
+    // Longest first, on purpose. Fired in ascending order the last write is also
+    // the best one, and a store that simply keeps the most recent version would
+    // pass by luck - it did, when this test was first written that way.
+    const lengths = [6, 5, 4, 3, 2, 1]
+    const results = await page.evaluate(
+      async ({ u, ls }) => {
+        const body = (n: number) => ({
+          record: n,
+          chain: Array.from({ length: n }, (_, i) => ({
+            emote: i % 8,
+            user: `0x${n}`,
+            name: `Player${n}`
+          }))
+        })
+        const calls = ls.map((n) =>
+          fetch(u, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body(n))
+          }).then((r) => r.status)
+        )
+        return Promise.all(calls)
+      },
+      { u: url, ls: lengths }
+    )
+    expect(
+      results.every((s) => s === 200),
+      `statuses: ${results.join(',')}`
+    ).toBe(true)
+
+    const best = Math.max(...lengths)
+    const after = await readsBack(page, url, best)
+    expect(record(after), 'the longest simultaneous run must survive all the others').toBe(best)
+    expect(weekRecord(after)).toBe(best)
+    // And the chain stored must be the winner's, not a shorter one's.
+    expect((after as { chain: unknown[] }).chain.length).toBe(best)
+  })
+
+  test('a body past the cap is refused without taking the function down', async ({
+    page
+  }, testInfo) => {
+    await onOrigin(page)
+    const url = urlFor(testInfo, 'huge')
+    const huge = await call(page, url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // Valid shape, absurd size: the cap has to bite before the JSON parser does.
+      body: JSON.stringify({ record: 1, chain: [link(0)], padding: 'x'.repeat(80_000) })
+    })
+    expect(huge.status, 'an oversized body must not be stored').not.toBe(200)
+
+    // The function must still be there for the next player.
+    const after = await call(page, url)
+    expect(after.status).toBe(200)
+    expect(record(after.body), 'a refused write must leave the world untouched').toBe(0)
   })
 })

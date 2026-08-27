@@ -2,12 +2,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parseSnapshot,
+  parseAuthors,
+  clampText,
   betterOf,
   builders,
   demoAdvance,
   shouldPlayDemo,
   isoWeek,
-  EMPTY
+  worldKey,
+  EMPTY,
+  type Snapshot
 } from './record.ts'
 
 const link = (emote: number, user = 'u1', name = 'Lynx') => ({ emote, user, name })
@@ -49,10 +53,12 @@ test('truncates oversized names rather than trusting them', () => {
 test('betterOf keeps the longer run and ignores ties', () => {
   const short = { record: 1, chain: [link(0)] }
   const long = { record: 2, chain: [link(0), link(1)] }
-  assert.equal(betterOf(short, long), long)
-  assert.equal(betterOf(long, short), long)
-  assert.equal(betterOf(long, { record: 2, chain: [link(3), link(4)] }), long, 'tie keeps ours')
-  assert.equal(betterOf(EMPTY, long), long)
+  // Compared by value, not identity: betterOf builds its result so it can carry
+  // the weekly block across from whichever side has one.
+  assert.deepEqual(betterOf(short, long), long)
+  assert.deepEqual(betterOf(long, short), long)
+  assert.deepEqual(betterOf(long, { record: 2, chain: [link(3), link(4)] }), long, 'tie keeps ours')
+  assert.deepEqual(betterOf(EMPTY, long), long)
 })
 
 test('builders counts distinct contributors', () => {
@@ -142,4 +148,53 @@ test('a snapshot without a weekly block is still valid', () => {
   const s = parseSnapshot({ record: 1, chain: [link(0)] })
   assert.ok(s)
   assert.equal(s.week, undefined)
+})
+
+test('the week survives a merge with a locally built snapshot', () => {
+  const fromServer: Snapshot = {
+    record: 9,
+    chain: [],
+    week: { record: 4, chain: [] }
+  }
+  const mine: Snapshot = { record: 11, chain: [] }
+  const merged = betterOf(fromServer, mine)
+  assert.equal(merged.record, 11, 'the longer run still wins')
+  assert.equal(merged.week?.record, 4, 'a local run has no week and must not erase one')
+})
+
+test('the endpoint owns the calendar, so its week replaces ours', () => {
+  const stale: Snapshot = { record: 9, chain: [], week: { record: 7, chain: [] } }
+  // A rolled-over week correctly reports zero. Taking the maximum here would pin
+  // last week's target on the ticker forever.
+  const rolled: Snapshot = { record: 9, chain: [], week: { record: 0, chain: [] } }
+  assert.equal(betterOf(stale, rolled).week?.record, 0)
+})
+
+test('the world key follows the realm the scene is actually in', () => {
+  assert.equal(worldKey({ realmName: 'RainbowRoad.dcl.eth' }, 'fallback'), 'rainbowroad.dcl.eth')
+  assert.equal(worldKey({ realmName: '' }, 'fallback.dcl.eth'), 'fallback.dcl.eth')
+  assert.equal(worldKey(undefined, 'fallback.dcl.eth'), 'fallback.dcl.eth')
+})
+
+test('a preview never writes into the live world', () => {
+  const live = worldKey({ realmName: 'rainbowroad.dcl.eth' }, 'x')
+  const preview = worldKey({ realmName: 'rainbowroad.dcl.eth', isPreview: true }, 'x')
+  assert.notEqual(preview, live)
+  assert.equal(preview, 'preview-rainbowroad.dcl.eth')
+})
+
+test('authors are trimmed to the chain they describe, and filled when short', () => {
+  const authors = parseAuthors([{ user: '0xa', name: 'Ayu' }, { user: '0xb' }], 3)
+  assert.equal(authors.length, 3)
+  assert.deepEqual(authors[0], { user: '0xa', name: 'Ayu' })
+  assert.equal(authors[1]?.name, 'Someone', 'a missing name is filled, not undefined')
+  assert.deepEqual(authors[2], { user: 'anon', name: 'Someone' })
+  assert.deepEqual(parseAuthors('nope', 1), [{ user: 'anon', name: 'Someone' }])
+})
+
+test('text from another player cannot run away with the ticker', () => {
+  assert.equal(clampText('A'.repeat(200)).length, 40)
+  assert.equal(clampText('WAVE', 12), 'WAVE')
+  assert.equal(clampText(42), '')
+  assert.equal(clampText(undefined), '')
 })

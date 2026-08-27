@@ -1,6 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { newState, tap, tick, adopt, litIndex, SHOW_STEP, FAIL_HOLD, LIVES } from './game.ts'
+import {
+  EMOTES,
+  newState,
+  tap,
+  tick,
+  adopt,
+  litIndex,
+  parseChain,
+  MAX_LIVE_CHAIN,
+  SHOW_STEP,
+  FAIL_HOLD,
+  LIVES
+} from './game.ts'
 
 /** Run playback to completion so the state lands in 'input'. */
 function playback(s: ReturnType<typeof newState>) {
@@ -133,4 +145,35 @@ test('a chain that was never repeated does not set the record', () => {
     if (i < LIVES - 1) playback(s)
   }
   assert.equal(s.record, 1, 'failing a length-2 chain must not record 2')
+})
+
+test('a chain from another player is only adopted when it is really a chain', () => {
+  assert.deepEqual(parseChain([0, 3, 7]), [0, 3, 7])
+  assert.deepEqual(parseChain([]), [])
+  // Anything that would light nothing, or index past the pads, is not a chain.
+  assert.equal(parseChain([0, EMOTES.length]), null)
+  assert.equal(parseChain([-1]), null)
+  assert.equal(parseChain([1.5]), null)
+  assert.equal(parseChain(['0']), null)
+  assert.equal(parseChain([null]), null)
+  assert.equal(parseChain('nope'), null)
+  assert.equal(parseChain(undefined), null)
+  assert.equal(parseChain({ length: 3 }), null)
+})
+
+test('a peer cannot freeze the stage with an enormous chain', () => {
+  const huge = new Array(MAX_LIVE_CHAIN + 1).fill(0)
+  assert.equal(parseChain(huge), null)
+  assert.equal(parseChain(huge.slice(1))?.length, MAX_LIVE_CHAIN)
+})
+
+test('a rejected broadcast leaves the round untouched', () => {
+  const s = newState()
+  tap(s, 2)
+  const before = s.chain.slice()
+  const bad = parseChain([0, 99, 1])
+  assert.equal(bad, null)
+  // adopt is never reached with an unparsed chain - this is the guard in index.ts
+  // written down as a test, so removing it fails here.
+  assert.deepEqual(s.chain, before)
 })

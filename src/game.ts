@@ -116,3 +116,28 @@ export function adopt(s: State, incoming: number[]): boolean {
   s.timer = 0
   return true
 }
+
+/**
+ * Longest live chain a peer may broadcast. Far above anything human hands could
+ * repeat, low enough that a forged payload cannot make the stage unplayable.
+ */
+export const MAX_LIVE_CHAIN = 200
+
+/**
+ * A chain arriving over MessageBus, or null if it is not one.
+ *
+ * Comms is a trust boundary exactly like the record endpoint: anyone in the
+ * world can emit on the bus, and the payload lands straight in state.chain,
+ * which then indexes EMOTES and drives the pads. An out-of-range index would
+ * light nothing and never be tappable - the round would simply hang - and a
+ * hundred-thousand-long array would freeze the stage.
+ */
+export function parseChain(raw: unknown): number[] | null {
+  if (!Array.isArray(raw) || raw.length > MAX_LIVE_CHAIN) return null
+  const out: number[] = []
+  for (const v of raw) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v >= EMOTES.length) return null
+    out.push(v)
+  }
+  return out
+}

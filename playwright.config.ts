@@ -4,6 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
 // re-evaluated inside every worker, so computing it here gave each worker a
 // different world and made the suite flake.
 
+const LIVE_WORLD = '**/deployed-world.spec.ts'
+
 export default defineConfig({
   testDir: './e2e',
   globalSetup: './e2e/global-setup.ts',
@@ -17,10 +19,24 @@ export default defineConfig({
   reporter: [['list']],
   use: { trace: 'off' },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
-    { name: 'mobile-chrome', use: { ...devices['Pixel 7'] } },
-    { name: 'mobile-safari', use: { ...devices['iPhone 14'] } }
+    // The endpoint suites run in every engine on purpose: CORS, preflight and
+    // fetch semantics differ between them, and the scene's own fetch is closest
+    // to none of them - so the widest net is the honest one.
+    ...['chromium', 'firefox', 'webkit', 'mobile-chrome', 'mobile-safari'].map((name, i) => ({
+      name,
+      testIgnore: LIVE_WORLD,
+      use: {
+        ...[
+          devices['Desktop Chrome'],
+          devices['Desktop Firefox'],
+          devices['Desktop Safari'],
+          devices['Pixel 7'],
+          devices['iPhone 14']
+        ][i]
+      }
+    })),
+    // Assertions about the deployed World, which are only true after a deploy.
+    // Kept out of the default run and out of CI; `npm run verify` is the caller.
+    { name: 'deployed', testMatch: LIVE_WORLD, use: { ...devices['Desktop Chrome'] } }
   ]
 })

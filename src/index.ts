@@ -5,6 +5,7 @@ import {
   MeshRenderer,
   MeshCollider,
   Material,
+  AudioSource,
   TouchScreenControls,
   InputAction
 } from '@dcl/sdk/ecs'
@@ -12,16 +13,32 @@ import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { triggerEmote } from '~system/RestrictedActions'
-import { EMOTES, State, newState, tap, tick, adopt, litIndex, SHOW_STEP } from './game.ts'
+import { getRealm } from '~system/Runtime'
+import { getPlayersInScene } from '~system/Players'
+import {
+  EMOTES,
+  State,
+  newState,
+  tap,
+  tick,
+  adopt,
+  litIndex,
+  parseChain,
+  SHOW_STEP
+} from './game.ts'
 import {
   Snapshot,
   EMPTY,
   parseSnapshot,
+  parseAuthors,
+  clampText,
   betterOf,
   builders,
   demoAdvance,
-  shouldPlayDemo
+  shouldPlayDemo,
+  worldKey
 } from './record.ts'
+import { CLIP, PAD_PITCH, MISS_PITCH } from './audio.ts'
 import { REQUEST_TIMEOUT_MS, withRetry } from './net.ts'
 import { setupUi } from './ui.tsx'
 import { spikeAvatar } from './spike-avatar.ts' // SPIKE: remove with the file
@@ -36,7 +53,14 @@ const FLASH = 0.25 // seconds a pad stays lit after you press it
 // Typed as string, not as its literal: an empty value is a supported mode
 // (local-only play), and the guards below must stay reachable code.
 const RECORD_API: string = 'https://sambung-dcl.vercel.app/api/chain'
-const WORLD = 'rainbowroad.dcl.eth'
+
+/**
+ * Where records live when the realm cannot say. The realm is asked first (see
+ * resolveWorld): a preview must never write into the live world's record, and
+ * the World this scene is hosted on is borrowed - it can be reassigned.
+ */
+const DEFAULT_WORLD = 'rainbowroad.dcl.eth'
+let world = DEFAULT_WORLD
 
 const state: State = newState()
 const bus = new MessageBus()
@@ -127,7 +151,7 @@ async function callRecordApi(init?: {
   body: string
 }) {
   return withRetry(async () => {
-    const res = await fetch(`${RECORD_API}?world=${WORLD}`, {
+    const res = await fetch(`${RECORD_API}?world=${encodeURIComponent(world)}`, {
       ...init,
       timeout: REQUEST_TIMEOUT_MS
     })
@@ -144,15 +168,9 @@ async function loadRecord() {
       note('the record endpoint refused the read', `HTTP ${res.status}`)
       return
     }
-    const snap = parseSnapshot(await res.json())
-    if (!snap) {
-      // A 200 that fails validation means the endpoint changed shape under us,
-      // which is worth knowing about even though play continues regardless.
-      note('the record endpoint returned an unusable payload', `HTTP ${res.status}`)
-      return
-    }
-    known = betterOf(known, snap)
-    if (known.record > state.record) state.record = known.record
+    // A 200 that fails validation means the endpoint changed shape under us,
+    // which is worth knowing about even though play continues regardless.
+    if (!adoptSnapshot(parseSnapshot(await res.json()))) return
     if (shouldPlayDemo(known.record, played, state.chain.length)) {
       ticker = `Record ${known.record}, built by ${builders(known)} players. Watch.`
       startDemo()
@@ -172,11 +190,30 @@ async function postRecord(snap: Snapshot) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(snap)
     })
-    if (!res.ok) note('the record endpoint refused the write', `HTTP ${res.status}`)
+    if (!res.ok) {
+      note('the record endpoint refused the write', `HTTP ${res.status}`)
+      return
+    }
+    // The reply is the endpoint's own view after the write: it holds the week it
+    // stamped, and any record another player set while this one was in flight.
+    // Throwing it away is how the ticker used to announce "nobody has set a chain
+    // this week" one second after this player set it.
+    adoptSnapshot(parseSnapshot(await res.json()))
   } catch (err) {
     // Losing one record post is survivable. Blocking the game on it is not.
     note('could not publish the record', err)
   }
+}
+
+/** Fold an endpoint reply into what this client knows. */
+function adoptSnapshot(snap: Snapshot | null): boolean {
+  if (!snap) {
+    note('the record endpoint returned an unusable payload', 'failed validation')
+    return false
+  }
+  known = betterOf(known, snap)
+  if (known.record > state.record) state.record = known.record
+  return true
 }
 
 /**
@@ -237,8 +274,12 @@ function highlight(): number {
   return flashTimer > 0 ? flashIdx : -1
 }
 
+/** Carries the miss sound. The stage itself is where a broken chain belongs. */
+let stage: Entity = engine.RootEntity
+
 function buildStage() {
   const floor = engine.addEntity()
+  stage = floor
   Transform.create(floor, {
     position: Vector3.create(8, 0.1, 8),
     scale: Vector3.create(13, 0.2, 13)
@@ -246,6 +287,7 @@ function buildStage() {
   MeshRenderer.setCylinder(floor)
   MeshCollider.setCylinder(floor)
   Material.setPbrMaterial(floor, { albedoColor: Color4.fromHexString('#14121F'), roughness: 1 })
+  AudioSource.create(floor, { audioClipUrl: CLIP, playing: false, pitch: MISS_PITCH, volume: 1 })
 
   pillars = EMOTES.map((e, i) => {
     const angle = (i / EMOTES.length) * Math.PI * 2
@@ -260,6 +302,15 @@ function buildStage() {
     })
     MeshRenderer.setBox(entity)
     MeshCollider.setBox(entity)
+    // The voice sits on the pillar, so the sound arrives from the pad that lit -
+    // the ring is spatial audio, not a stereo mix. Global audio would have been
+    // the lazier call but it is desktop-only, and this scene is for phones.
+    AudioSource.create(entity, {
+      audioClipUrl: CLIP,
+      playing: false,
+      pitch: PAD_PITCH[i] ?? 1,
+      volume: 1
+    })
     paint(entity, e.hex, false)
     return { entity, hex: e.hex, lit: false }
   })
@@ -275,6 +326,21 @@ function paint(entity: Entity, hex: string, lit: boolean) {
   })
 }
 
+/**
+ * Strike an entity's clip from the top.
+ *
+ * `playing` alone is not enough to retrigger: the client keeps the flag true
+ * after a clip ends, so a second strike would write the same component state,
+ * emit no update, and be silent. Nudging currentTime guarantees the component
+ * actually changes, and the offset is a tenth of a millisecond - inaudible.
+ */
+function pulse(entity: Entity) {
+  const audio = AudioSource.getMutableOrNull(entity)
+  if (!audio) return
+  audio.currentTime = audio.currentTime === 0 ? 0.0001 : 0
+  audio.playing = true
+}
+
 function syncPillars() {
   const on = highlight()
   pillars.forEach((pillar, i) => {
@@ -282,6 +348,13 @@ function syncPillars() {
     if (pillar.lit === shouldBeLit) return
     pillar.lit = shouldBeLit
     paint(pillar.entity, pillar.hex, shouldBeLit)
+    // Light and sound are the same event, so every path that lights a pad -
+    // playback, a tap, the record replay - is scored without knowing about audio.
+    if (shouldBeLit) pulse(pillar.entity)
+    else {
+      const audio = AudioSource.getMutableOrNull(pillar.entity)
+      if (audio) audio.playing = false
+    }
   })
 }
 
@@ -310,10 +383,19 @@ function onTap(i: number) {
     authors.push(myId())
     ticker = `${me()} added ${emote.label} — chain is ${state.chain.length}`
     bus.emit('chain', { chain: state.chain, authors, by: me(), label: emote.label })
-  } else if (result === 'completed' && state.chain.length > known.record) {
-    known = snapshotNow()
-    void postRecord(known)
+  } else if (result === 'completed') {
+    // A run that beats this week's target but not the all-time one is still news:
+    // the weekly number is the reachable goal on the ticker, and it used to be
+    // impossible to move it in any world whose all-time record was already higher.
+    const mine = snapshotNow()
+    const beatsAllTime = mine.record > known.record
+    const beatsWeek = mine.record > (known.week?.record ?? 0)
+    if (beatsAllTime || beatsWeek) {
+      if (beatsAllTime) known = betterOf(known, mine)
+      void postRecord(mine)
+    }
   } else if (result === 'missed') {
+    pulse(stage)
     ticker = `${me()} broke the chain at ${state.cursor + 1}`
   }
 }
@@ -339,6 +421,38 @@ function clearMobileHud() {
     hideCrosshair: true,
     touchInputs: HUD_BUTTONS.map((inputAction) => ({ inputAction, hide: true }))
   })
+}
+
+/**
+ * Ask the realm which world this is, before the first record call goes out.
+ *
+ * Never fatal: an unanswered realm just means the default world key, which is
+ * what the scene used to hardcode.
+ */
+async function resolveWorld() {
+  try {
+    const { realmInfo } = await getRealm({})
+    world = worldKey(realmInfo, DEFAULT_WORLD)
+    if (realmInfo?.isPreview) console.log(`[sambung] preview realm - records go to "${world}"`)
+  } catch (err) {
+    note('could not read the realm, using the default world key', err)
+  }
+}
+
+/**
+ * Count who is already standing here.
+ *
+ * onEnterScene only fires for arrivals after this client loads, so a player who
+ * walked into a busy stage counted zero others and the ticker said so.
+ */
+async function seedOthers() {
+  try {
+    const mine = myId().user
+    const { players } = await getPlayersInScene({})
+    for (const p of players) if (p.userId && p.userId !== mine) others.add(p.userId)
+  } catch (err) {
+    note('could not list who is already in the scene', err)
+  }
 }
 
 /** Tell the room who just walked in, and hand them the chain in progress. */
@@ -378,24 +492,29 @@ export function main() {
   setupUi({ state, highlight, ticker: () => ticker, onTap })
 
   watchArrivals()
-  void loadRecord() // never awaited: the scene must be playable before this lands
+  void seedOthers()
+  // Never awaited: the scene must be playable before any of this lands. The
+  // realm answer only has to arrive before the record call it keys.
+  void resolveWorld().then(loadRecord)
 
-  bus.on(
-    'chain',
-    (msg: {
-      chain: number[]
-      authors?: { user: string; name: string }[]
-      by: string
-      label: string
-    }) => {
-      if (adopt(state, msg.chain)) {
-        // Authors travel with the chain, or the record we later store would
-        // credit the wrong people.
-        authors = (msg.authors ?? []).slice(0, msg.chain.length)
-        ticker = `${msg.by} added ${msg.label} — chain is ${state.chain.length}`
-      }
+  // Comms is a trust boundary. Anyone in the world can emit on this bus, and
+  // what arrives is written straight into the live chain and printed in the
+  // ticker - so it is parsed exactly as hard as an HTTP reply is.
+  bus.on('chain', (msg: unknown) => {
+    const m = (typeof msg === 'object' && msg !== null ? msg : {}) as Record<string, unknown>
+    const chain = parseChain(m.chain)
+    if (!chain) {
+      note('a peer broadcast a chain this scene cannot use', JSON.stringify(m.chain ?? null))
+      return
     }
-  )
+    if (!adopt(state, chain)) return
+    // Authors travel with the chain, or the record we later store would credit
+    // the wrong people.
+    authors = parseAuthors(m.authors, chain.length)
+    const by = clampText(m.by) || 'Someone'
+    const label = clampText(m.label, 12) || 'an emote'
+    ticker = `${by} added ${label} — chain is ${state.chain.length}`
+  })
 
   // A season ends inside tick(), not on a tap, so watch for the chain emptying.
   // The surviving record is the whole point of the reset — say it out loud.

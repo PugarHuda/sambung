@@ -75,9 +75,58 @@ export function parseSnapshot(raw: unknown): Snapshot | null {
   return week ? { ...all, week } : all
 }
 
-/** Keep whichever snapshot is the longer run. Ties keep what we already had. */
+/**
+ * Keep whichever snapshot is the longer run. Ties keep what we already had.
+ *
+ * The weekly block is not merged by length: the endpoint owns the calendar, and
+ * a week that has just rolled over correctly reports zero. Taking the maximum
+ * would pin last week's target on the ticker forever. So the week always comes
+ * from the newer side when it has one - a locally built snapshot has none, and
+ * must not erase what the endpoint last said.
+ */
 export function betterOf(mine: Snapshot, theirs: Snapshot): Snapshot {
-  return theirs.record > mine.record ? theirs : mine
+  const best = theirs.record > mine.record ? theirs : mine
+  const week = theirs.week ?? mine.week
+  const merged: Snapshot = { record: best.record, chain: best.chain }
+  return week ? { ...merged, week } : merged
+}
+
+/**
+ * The record key for the world the scene is actually running in.
+ *
+ * Hardcoding it meant two silent failures waiting to happen: a local preview
+ * wrote its practice runs straight into the live world's record, and the day the
+ * organiser moves the scene to another World the scene would keep reading the
+ * old one. The realm knows both answers, so ask it.
+ */
+export function worldKey(
+  realm: { realmName?: string; isPreview?: boolean } | undefined,
+  fallback: string
+): string {
+  const name = (realm?.realmName ?? '').trim() || fallback
+  return realm?.isPreview ? `preview-${name.toLowerCase()}` : name.toLowerCase()
+}
+
+/**
+ * Text that arrived from another player, cut to something a UI line can hold.
+ *
+ * Names and labels ride the MessageBus, which anyone in the world can write to,
+ * and they land directly in the ticker.
+ */
+export function clampText(raw: unknown, max = MAX_NAME): string {
+  return typeof raw === 'string' ? raw.slice(0, max) : ''
+}
+
+/** Authors travelling beside a chain, trimmed to the chain they describe. */
+export function parseAuthors(raw: unknown, len: number): { user: string; name: string }[] {
+  const list: unknown[] = Array.isArray(raw) ? (raw as unknown[]) : []
+  const out: { user: string; name: string }[] = []
+  for (let i = 0; i < len; i++) {
+    const v = list[i]
+    const o = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {}
+    out.push({ user: clampText(o.user) || 'anon', name: clampText(o.name) || 'Someone' })
+  }
+  return out
 }
 
 /** Distinct contributors, for "built by 9 players". */

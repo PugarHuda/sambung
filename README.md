@@ -10,17 +10,26 @@ right to add the next one. The chain is shared by everyone in the World.
 A chain has three lives. Miss, and it replays; miss it away entirely and the season
 closes, the chain resets, and its length is left behind as the **record** to beat.
 
-Built for the **Decentraland Friendzone Mobile Buildathon**.
+Built for the **Decentraland Friendzone Mobile Buildathon**. Live at
+[RainbowRoad.dcl.eth](https://decentraland.org/jump/?realm=rainbowroad.dcl.eth), and
+listed in Decentraland Places.
 
 ## Why it works on a phone
 
 - **Eight big pads, one thumb.** No walking, no aiming, no camera control, no typing.
 - **The native HUD is cleared.** `TouchScreenControls` hides the joystick, crosshair and
   gamepad buttons, so nothing overlaps the thumb zone or eats a tap meant for a pad.
-- **Colour is the signal, words are the backup.** Readable on a small screen at a glance.
-- **Percent-based UI.** Layout holds on any aspect ratio.
-- **No custom 3D assets.** One cylinder and eight boxes — the whole scene is primitives,
-  so it loads instantly and never drops frames on a mid-range device.
+- **The UI lives inside `ScreenInsetArea`,** so the header and the pad grid respect the
+  notch, the status bar and the home indicator instead of hiding under them.
+- **Colour is the signal, words are the backup** — and the label ink is derived per pad
+  from its WCAG contrast ratio (`src/contrast.ts`), because four of the eight pads are
+  too pale to carry white text at the moment they light up.
+- **Every pad is also a note.** One 13 KB clip, played at eight pitches, so a chain is a
+  melody and not just a sequence of flashes. That is the half of Simon that makes it
+  memorable, and it costs one file.
+- **No custom 3D assets.** One cylinder and eight boxes: **192 triangles**, 0.016% of the
+  mobile hard limit of 1,200,000. No imported models, no textures, no materials beyond
+  solid colour. `npm run budget` fails the build if that stops being true.
 
 ## Why it works when nobody else is around
 
@@ -30,44 +39,104 @@ You watch what the record _is_, then start your own chain at one and chase it. A
 skips the replay — it is a welcome, never a memory test, and never a wall.
 
 Judging happens one visitor at a time, so a game that needs four players is a game that
-scores zero. Sambung is playable solo from the first tap — you build the chain, you
-repeat it, you chase your own best. When someone else walks in, the chain becomes shared
-and every input is broadcast through your avatar's emote, which is the whole point: you
-read other players by watching them, not by reading a UI.
+scores zero. Sambung is playable solo from the first tap. When someone else walks in, the
+chain becomes shared and every input is broadcast through your avatar's emote, which is
+the whole point: you read other players by watching them, not by reading a UI.
+
+## The record
+
+`server/api/chain.ts` is a single Vercel function backed by Vercel Blob, deployed
+separately from the scene and keyed by World.
+
+- **The all-time record never resets.** Blanking it could empty the World in the middle
+  of a judging window.
+- **A weekly best resets on the ISO week boundary** and is the number on the ticker: the
+  reachable target, and the reason to come back on another day. The clock is the server's
+  alone — a scene could claim any week it liked.
+- **Writes are monotonic and reconciled by maximum,** not by recency. Two players who
+  finish at the same moment both believe they won, and the slower one used to erase the
+  better record; reads now merge every stored version, because a maximum does not care
+  what order it arrives in.
+- **Every write is a new immutable object.** Object stores do not promise read-after-write
+  when you replace a path — measured stale on 5 reads in 8 — so nothing is ever replaced.
+- **The scene is local-first.** The game is fully playable before any network call
+  resolves, and an unreachable endpoint reads as "no record yet" rather than an error.
+  Requests carry an 8 s timeout and three retries with capped backoff.
+
+The scene asks the realm which World it is in, so a local preview writes to its own
+`preview-` key and can never touch the live record.
 
 ## Run it
 
 ```bash
 npm install
-npm start     # opens the local preview
-npm test      # game-logic self-check, no framework
+npm start           # local preview
+npm test            # 71 unit, contract, schema and bundle-boot tests
+npm run budget      # triangle, asset and audio budget
+npm run test:e2e    # 40 Playwright tests against the live endpoint, 5 browser engines
+npm run lint        # eslint, type-aware
+npm run sound       # regenerate sounds/pad.wav from scripts/make-sound.mjs
 ```
 
-Use the preview's mobile view — or better, open the preview URL on an actual phone on the
-same network. Desktop lies about both performance and touch ergonomics.
+Use the preview on an actual phone on the same network. Desktop lies about both
+performance and touch ergonomics.
+
+The test suite is deliberately layered:
+
+| Suite                        | What only it can catch                                                     |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `src/*.test.ts`              | Chain rules, record parsing, contrast maths, retry policy, week boundaries |
+| `src/contract.test.ts`       | Drift between the validator in the scene and its twin in the endpoint      |
+| `src/scene-json.test.ts`     | `scene.json` against Decentraland's own schema, and the spawn region       |
+| `src/bundle.test.ts`         | The real `bin/index.js` booting inside a stubbed scene runtime             |
+| `e2e/record-api.spec.ts`     | CORS, preflight, concurrency, malformed and oversized payloads             |
+| `e2e/deployed-world.spec.ts` | Whether the World actually serves what this repo says it does              |
 
 ## Publish it
 
-1. Set `worldConfiguration.name` in `scene.json` to your Decentraland NAME or ENS domain
-   (`yourname.dcl.eth` / `yourname.eth`).
-2. `npm run deploy`
-3. Wait for the asset-bundle conversion (~15 min) before judging the result.
-4. Confirm the World's access is **Public** and that the spawn point drops you on the stage.
+```bash
+npm run deploy      # scene → the World
+npm run verify      # then check the World really got it
+```
+
+`npm run verify` is the step that matters. It reads the deployed entity back from the
+content server and asserts that the bundle is byte-for-byte the local build, that the
+metadata is not stale, that the audio clip is served and is a real WAVE stream, that
+nothing private leaked into the public manifest, and that the Places listing shows the
+copy we wrote. It has already caught a deploy that silently never happened.
+
+After deploying, wait for Decentraland's asset-bundle conversion (~15 min) before judging
+the result, and confirm the World's access is **Public**.
 
 ## Layout
 
-| File               | What's in it                                                     |
-| ------------------ | ---------------------------------------------------------------- |
-| `src/game.ts`      | The state machine. No DCL imports, so it is testable on its own. |
-| `src/game.test.ts` | `node --test` self-check for the chain rules.                    |
-| `src/ui.tsx`       | The thumb-zone pad grid and the status header.                   |
-| `src/index.ts`     | Stage, emote triggering, `MessageBus` sync, engine wiring.       |
+| File                       | What's in it                                                     |
+| -------------------------- | ---------------------------------------------------------------- |
+| `src/game.ts`              | The state machine, and the comms trust boundary. No DCL imports. |
+| `src/record.ts`            | Record parsing, world keys, week maths. No DCL imports.          |
+| `src/net.ts`               | Timeout and retry policy, with the clock injected.               |
+| `src/contrast.ts`          | WCAG luminance maths that picks each pad's label ink.            |
+| `src/audio.ts`             | The pitch table: one clip, eight voices.                         |
+| `src/ui.tsx`               | The thumb-zone pad grid and the status header.                   |
+| `src/index.ts`             | Stage, emotes, audio, `MessageBus` sync, engine wiring.          |
+| `server/api/chain.ts`      | The record endpoint. Deploys to Vercel, not into the World.      |
+| `scripts/scene-budget.mjs` | The performance claim, asserted from the source.                 |
+| `scripts/make-sound.mjs`   | Generates the one audio file the scene ships.                    |
 
-## Deliberately not built yet
+## Deliberately not built
 
-- **A record that outlives the tab.** Seasons and the record exist, but the number is
-  still session-local. Carrying it across visits needs a small serverless endpoint —
-  that is the next piece of work, not a someday.
+- **Ghosts.** The plan is for the record replay to be performed by `AvatarShape` copies of
+  the players who built it. The SDK warns that `AvatarShape` is "only actually used in the
+  global Avatar Scene", so `src/spike-avatar.ts` exists to answer that on a real phone
+  before anything is built on top of it. If the answer is no, the record replay stays as
+  it is — lights and names.
+- **Signed writes.** The endpoint validates shape, size and monotonicity, but does not
+  verify a Decentraland auth chain. A determined forger can post one fake record.
+  `signedFetch` verification is the upgrade path, worth doing if the record is actually
+  vandalised.
+- **Quests.** `@dcl/quests-client` ships with the SDK and is unused: `createQuestsClient`
+  needs a `questId` already published to Decentraland's Quests service, which is
+  provisioning outside this repo. Half-wiring it would be a stub.
 - **Turn arbitration.** Two players extending the chain at the same instant resolve by
   "longest chain wins". Enough to converge; a real tiebreak only earns its keep if
   playtests show the collision actually happens.

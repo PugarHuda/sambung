@@ -47,3 +47,13 @@ test-results
 # Generated SDK reference for AI tooling (see .gitignore). Not scene content.
 dclcontext
 dclcontext/**
+
+# Build and asset tooling. scripts/make-sound.mjs generates sounds/pad.wav, which
+# does ship - the generator itself does not. Named as a folder as well as by
+# extension, because the default list matches variants unreliably and the deploy
+# manifest is the only place that mistake becomes visible.
+scripts
+scripts/**
+
+# Prose. The repo is public on GitHub; the World only needs the scene.
+*.md

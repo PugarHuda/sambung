@@ -17,9 +17,9 @@
       "name": "center",
       "default": true,
       "position": {
-        "x": 8,
-        "y": 0.3,
-        "z": 8
+        "x": [6.5, 9.5],
+        "y": [0.3, 0.3],
+        "z": [6.5, 9.5]
       },
       "cameraTarget": {
         "x": 8,
