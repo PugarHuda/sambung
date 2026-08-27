@@ -45,20 +45,22 @@ the whole point: you read other players by watching them, not by reading a UI.
 
 ## The record
 
-`server/api/chain.ts` is a single Vercel function backed by Vercel Blob, deployed
+`server/api/chain.ts` is a single Vercel function in front of a Redis sorted set, deployed
 separately from the scene and keyed by World.
 
+- **A record is a set member scored by its own length,** so "the record" is the top of the
+  set. Two players who finish at the same moment both add a member and the higher score
+  wins on its own — no read-modify-write, no lock, and no way for a slower write to erase
+  a better one. This replaced an object-store design that needed a list operation per
+  read; the project's own test suite spent that store's free allowance in a day.
 - **The all-time record never resets.** Blanking it could empty the World in the middle
   of a judging window.
-- **A weekly best resets on the ISO week boundary** and is the number on the ticker: the
-  reachable target, and the reason to come back on another day. The clock is the server's
-  alone — a scene could claim any week it liked.
-- **Writes are monotonic and reconciled by maximum,** not by recency. Two players who
-  finish at the same moment both believe they won, and the slower one used to erase the
-  better record; reads now merge every stored version, because a maximum does not care
-  what order it arrives in.
-- **Every write is a new immutable object.** Object stores do not promise read-after-write
-  when you replace a path — measured stale on 5 reads in 8 — so nothing is ever replaced.
+- **A weekly best is a key per ISO week with a three-week expiry** — the reachable target
+  on the ticker, and the reason to come back on another day. Expiry is the whole of the
+  reset logic; the clock is the server's alone.
+- **Reads are held at the edge for three seconds,** writes are limited per caller, and any
+  world other than the deployed one ages out after a month of silence. All three exist
+  because a store that runs out of operations is a record nobody can see.
 - **The scene is local-first.** The game is fully playable before any network call
   resolves, and an unreachable endpoint reads as "no record yet" rather than an error.
   Requests carry an 8 s timeout and three retries with capped backoff.
@@ -71,11 +73,12 @@ The scene asks the realm which World it is in, so a local preview writes to its 
 ```bash
 npm install
 npm start           # local preview
-npm test            # 71 unit, contract, schema and bundle-boot tests
+npm test            # 78 unit, contract, schema and bundle-boot tests
 npm run budget      # triangle, asset and audio budget
-npm run test:e2e    # 40 Playwright tests against the live endpoint, 5 browser engines
+npm run test:e2e    # 41 Playwright tests against the live endpoint, 5 browser engines
 npm run lint        # eslint, type-aware
 npm run sound       # regenerate sounds/pad.wav from scripts/make-sound.mjs
+npm run serve       # the record endpoint on localhost, against the real store
 ```
 
 Use the preview on an actual phone on the same network. Desktop lies about both
@@ -90,7 +93,16 @@ The test suite is deliberately layered:
 | `src/scene-json.test.ts`     | `scene.json` against Decentraland's own schema, and the spawn region       |
 | `src/bundle.test.ts`         | The real `bin/index.js` booting inside a stubbed scene runtime             |
 | `e2e/record-api.spec.ts`     | CORS, preflight, concurrency, malformed and oversized payloads             |
+| `e2e/abuse.spec.ts`          | A caller that writes like a loop is cut off; runs last, alone              |
 | `e2e/deployed-world.spec.ts` | Whether the World actually serves what this repo says it does              |
+
+The endpoint can be proven before a deployment slot is spent on it — Vercel's free plan
+caps deployments per day, and this project has hit that cap with a fix ready twice:
+
+```bash
+npm run serve                                                       # in one terminal
+SAMBUNG_API=http://127.0.0.1:8787/api/chain npm run test:e2e        # in another
+```
 
 ## Publish it
 
@@ -110,18 +122,19 @@ the result, and confirm the World's access is **Public**.
 
 ## Layout
 
-| File                       | What's in it                                                     |
-| -------------------------- | ---------------------------------------------------------------- |
-| `src/game.ts`              | The state machine, and the comms trust boundary. No DCL imports. |
-| `src/record.ts`            | Record parsing, world keys, week maths. No DCL imports.          |
-| `src/net.ts`               | Timeout and retry policy, with the clock injected.               |
-| `src/contrast.ts`          | WCAG luminance maths that picks each pad's label ink.            |
-| `src/audio.ts`             | The pitch table: one clip, eight voices.                         |
-| `src/ui.tsx`               | The thumb-zone pad grid and the status header.                   |
-| `src/index.ts`             | Stage, emotes, audio, `MessageBus` sync, engine wiring.          |
-| `server/api/chain.ts`      | The record endpoint. Deploys to Vercel, not into the World.      |
-| `scripts/scene-budget.mjs` | The performance claim, asserted from the source.                 |
-| `scripts/make-sound.mjs`   | Generates the one audio file the scene ships.                    |
+| File                         | What's in it                                                          |
+| ---------------------------- | --------------------------------------------------------------------- |
+| `src/game.ts`                | The state machine, and the comms trust boundary. No DCL imports.      |
+| `src/record.ts`              | Record parsing, world keys, week maths. No DCL imports.               |
+| `src/net.ts`                 | Timeout and retry policy, with the clock injected.                    |
+| `src/contrast.ts`            | WCAG luminance maths that picks each pad's label ink.                 |
+| `src/audio.ts`               | The pitch table: one clip, eight voices.                              |
+| `scripts/serve-endpoint.mjs` | The endpoint on localhost, for proving it before a deploy.            |
+| `src/ui.tsx`                 | The thumb-zone pad grid and the status header.                        |
+| `src/index.ts`               | Stage, emotes, audio, `MessageBus` sync, engine wiring.               |
+| `server/api/chain.ts`        | The record endpoint. Deploys to Vercel (Singapore, beside the store). |
+| `scripts/scene-budget.mjs`   | The performance claim, asserted from the source.                      |
+| `scripts/make-sound.mjs`     | Generates the one audio file the scene ships.                         |
 
 ## Deliberately not built
 
