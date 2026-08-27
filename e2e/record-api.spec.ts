@@ -14,7 +14,27 @@ import { test, expect, Page, TestInfo } from '@playwright/test'
 // The deployed endpoint by default. Overridable so the same suite can be pointed
 // at a preview deployment before it is aliased into production.
 const API = process.env.SAMBUNG_API ?? 'https://sambung-dcl.vercel.app/api/chain'
-const ORIGIN = 'https://sambung-e2e.test'
+/**
+ * The origin the test page is served from. Always a different origin than the
+ * endpoint, so CORS and its preflight are enforced either way.
+ *
+ * Against a local endpoint it has to be loopback too. Chrome's Private Network
+ * Access rules block a page on a public origin from reaching 127.0.0.1 at all,
+ * and the block happens before the request, so a perfectly good local endpoint
+ * reads as "Failed to fetch" on every call. A different port is still a
+ * different origin, so nothing is weakened by moving there.
+ */
+function originFor(api: string): string {
+  const url = new URL(api)
+  if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost')
+    return 'https://sambung-e2e.test'
+  // scripts/serve-endpoint.mjs serves a blank page on the next port up. It has
+  // to be a real server: a page Playwright fulfils has no address of its own, so
+  // Chrome treats it as public and refuses it the loopback address space.
+  return `${url.protocol}//${url.hostname}:${Number(url.port) + 1}`
+}
+
+const ORIGIN = originFor(API)
 
 function urlFor(testInfo: TestInfo, slug: string): string {
   const run = process.env.SAMBUNG_TEST_WORLD ?? 'pwtest'
@@ -22,10 +42,17 @@ function urlFor(testInfo: TestInfo, slug: string): string {
   return `${API}?world=${world}`
 }
 
+const LOCAL = ORIGIN.startsWith('http://127.0.0.1')
+
 async function onOrigin(page: Page) {
-  await page.route(`${ORIGIN}/**`, (route) =>
-    route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>e2e</title>' })
-  )
+  // Against the deployed endpoint the caller page is invented, so no external
+  // site is needed. Against a local one it has to be fetched for real, or the
+  // browser will not grant it the loopback address space - see originFor.
+  if (!LOCAL) {
+    await page.route(`${ORIGIN}/**`, (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>e2e</title>' })
+    )
+  }
   await page.goto(`${ORIGIN}/`)
 }
 
