@@ -1,27 +1,43 @@
-// Sambung's record store: one snapshot per world.
+// Sambung's record store: the best chain a world has ever held, and the best of
+// the current week.
 //
-// Two records live here. The all-time best never resets — blanking it could empty
-// a world in the middle of a judging window. The weekly best resets on the ISO
-// week boundary and is the number worth coming back for. The clock is the
-// server's alone: a scene could claim any week it liked.
+// Backed by Redis, and shaped so that Redis does the hard part. Each record is a
+// member of a sorted set scored by its own length, so "the record" is simply the
+// top of the set. Two players who finish at the same moment both add a member
+// and the higher score wins on its own - no read-modify-write, no lock, and no
+// way for a slower write to erase a better one.
+//
+// The previous store was Vercel Blob, which has no compare-and-set: it needed a
+// list of immutable versions merged by maximum on every read. That cost one list
+// operation per read, and the project's own end-to-end suite spent the free
+// allowance and suspended the store mid-week. This design is one command to read
+// and four to write.
 //
 // ponytail: no signature check. A determined forger can POST a fake record once
 // (size-capped, so not an infinite one). Verifying the DCL auth chain via
-// signedFetch is the upgrade path — worth doing only if the record actually gets
+// signedFetch is the upgrade path - worth doing only if the record actually gets
 // vandalised during judging, not before.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { put, list, del } from '@vercel/blob'
+import { Redis } from '@upstash/redis'
 
-const KEY_PREFIX = 'sambung-'
+const KEY_PREFIX = 'sambung'
 const MAX_EMOTE = 8
 const MAX_CHAIN = 200
 const MAX_NAME = 40
 const DEFAULT_WORLD = 'rainbowroad.dcl.eth'
 
+/**
+ * How long a week's key lives after it is written.
+ *
+ * Three weeks rather than one: a key that expired exactly on the boundary would
+ * race the clock, and this way an old week simply ages out instead of needing a
+ * reset written anywhere. Expiry is the whole of the weekly reset logic.
+ */
+const WEEK_TTL_SECONDS = 60 * 60 * 24 * 21
+
 type Link = { emote: number; user: string; name: string }
 type Stint = { record: number; chain: Link[] }
-type Stored = Stint & { season: string; week: Stint }
 type Reply = Stint & { week: Stint }
 
 const NO_STINT: Stint = { record: 0, chain: [] }
@@ -42,32 +58,6 @@ function isoWeek(at: Date): string {
   firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayFromMonday + 3)
   const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000))
   return `${thursdayYear}-W${String(week).padStart(2, '0')}`
-}
-
-/** How many stored versions a single read will reconcile across. */
-const MAX_VERSIONS = 12
-
-/** The longer of two runs. Ties keep the first, which keeps the reduce stable. */
-function longer(a: Stint, b: Stint): Stint {
-  return b.record > a.record ? b : a
-}
-
-/**
- * Combine two stored versions into the best of both.
- *
- * The season is taken from whichever version is in the newer week, so a rollover
- * cannot be undone by an older write that still carries last week's target.
- */
-function mergeStored(a: Stored, b: Stored): Stored {
-  const season = a.season >= b.season ? a.season : b.season
-  const weekOf = (v: Stored) => (v.season === season ? v.week : NO_STINT)
-  const best = longer(a, b)
-  return {
-    record: best.record,
-    chain: best.chain,
-    season,
-    week: longer(weekOf(a), weekOf(b))
-  }
 }
 
 // Mirrors src/record.ts. Deliberately duplicated rather than shared: the scene
@@ -95,111 +85,58 @@ function parseStint(raw: unknown): Stint | null {
   return { record: o.record, chain }
 }
 
-function parseStored(raw: unknown, now: Date): Stored | null {
-  const all = parseStint(raw)
-  if (!all) return null
-  const o = raw as Record<string, unknown>
-  const season = typeof o.season === 'string' ? o.season : isoWeek(now)
-  const week = parseStint(o.week) ?? NO_STINT
-  return { ...all, season, week }
-}
-
 /** World names come from the query string, so they are untrusted key material. */
 function keyFor(world: unknown): string {
   const w = typeof world === 'string' && world ? world : DEFAULT_WORLD
-  // No extension: versions live under this as a folder, and addRandomSuffix
-  // inserts its suffix into the basename, so a key ending in .json would push
-  // the random part outside the prefix we later list by.
-  return (
-    KEY_PREFIX +
-    w
-      .toLowerCase()
-      .replace(/[^a-z0-9.-]/g, '')
-      .slice(0, 64)
-  )
+  return `${KEY_PREFIX}:${w
+    .toLowerCase()
+    .replace(/[^a-z0-9.-]/g, '')
+    .slice(0, 64)}`
 }
 
-function store() {
-  // Injected by Vercel once the blob store is connected to this project.
-  if (!process.env.BLOB_READ_WRITE_TOKEN) return null
-  return {
-    async get(key: string, now: Date): Promise<Stored> {
-      const fresh: Stored = { ...NO_STINT, season: isoWeek(now), week: NO_STINT }
-      try {
-        // Every write is a new immutable object, so the newest upload is the
-        // truth. Overwriting one stable pathname was measured stale on 5 of 8
-        // reads even with cache busting - object stores do not promise
-        // read-after-write on replace, only on create.
-        const found = await list({ prefix: `${key}/` })
-        if (found.blobs.length === 0) return fresh
+function store(): Redis | null {
+  // Injected by the Upstash integration. Both spellings exist depending on how
+  // the store was attached, and a missing one is a configuration state rather
+  // than an error: the endpoint answers as an empty world and the scene plays on.
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL
+  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN
+  if (!url || !token) return null
+  return new Redis({ url, token })
+}
 
-        // Newest first, and only ever a handful: pruning below keeps it that way.
-        const versions = [...found.blobs]
-          .sort((a, b) => (a.uploadedAt > b.uploadedAt ? -1 : 1))
-          .slice(0, MAX_VERSIONS)
+/**
+ * The top member of a sorted set, validated.
+ *
+ * The client parses JSON members on the way out, so a member arrives as an
+ * object here and as a string only if that ever changes; both are handled
+ * because a store that silently returns the wrong shape must read as "no record
+ * yet" rather than take the scene down.
+ */
+async function top(redis: Redis, key: string): Promise<Stint> {
+  const rows = await redis.zrange<unknown[]>(key, 0, 0, { rev: true })
+  const raw = rows[0]
+  if (raw === undefined) return NO_STINT
+  const parsed = typeof raw === 'string' ? safeJson(raw) : raw
+  return parseStint(parsed) ?? NO_STINT
+}
 
-        const parsed: Array<{ url: string; value: Stored }> = []
-        for (const blob of versions) {
-          const r = await fetch(blob.url, { cache: 'no-store' })
-          if (!r.ok) continue
-          const value = parseStored(await r.json(), now)
-          if (value) parsed.push({ url: blob.url, value })
-        }
-        if (parsed.length === 0) return fresh
-
-        // Two players who beat the record at the same moment both read the old
-        // value, both believe they won, and the later write used to erase the
-        // better one - measured as a lost update on 3 of 6 concurrent rounds.
-        // The record is a maximum, and a maximum does not care what order it
-        // arrives in, so reads reduce rather than pick.
-        const merged = parsed.map((p) => p.value).reduce(mergeStored)
-
-        // Keep whichever versions actually supply the surviving numbers, and
-        // only drop the rest. An earlier attempt pruned by "is dominated by the
-        // merge", which is true of the winner too - reading once deleted the
-        // record and left the seed behind.
-        const keep = new Set<string>()
-        keep.add(parsed.reduce((best, p) => (p.value.record > best.value.record ? p : best)).url)
-        const thisSeason = parsed.filter((p) => p.value.season === merged.season)
-        if (thisSeason.length > 0) {
-          keep.add(
-            thisSeason.reduce((best, p) =>
-              p.value.week.record > best.value.week.record ? p : best
-            ).url
-          )
-        }
-        const spent = parsed.filter((p) => !keep.has(p.url)).map((p) => p.url)
-        if (spent.length > 0) void del(spent).catch(() => undefined)
-
-        return merged
-      } catch {
-        // An unreachable or corrupt store reads as an empty world rather than a
-        // 500, so the scene keeps playing on its local record.
-        return fresh
-      }
-    },
-    async set(key: string, value: Stored): Promise<void> {
-      // A random suffix under the key's folder: never replacing an object is what
-      // makes the next read consistent.
-      await put(`${key}/v.json`, JSON.stringify(value), {
-        access: 'public',
-        contentType: 'application/json',
-        addRandomSuffix: true,
-        cacheControlMaxAge: 0
-      })
-    }
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
   }
 }
 
-/** What a caller sees: the all-time record, plus this week's target. */
-function reply(stored: Stored, now: Date): Reply {
-  const season = isoWeek(now)
-  return {
-    record: stored.record,
-    chain: stored.chain,
-    // A week that has rolled over reports empty without touching the all-time run.
-    week: stored.season === season ? stored.week : NO_STINT
-  }
+/**
+ * Add a run to a set and keep only the best member in it.
+ *
+ * Order matters and concurrency does not: whichever writer trims last, the
+ * member left standing is the highest-scored one either of them added.
+ */
+function keepBest(pipeline: ReturnType<Redis['pipeline']>, key: string, run: Stint) {
+  pipeline.zadd(key, { score: run.record, member: JSON.stringify(run) })
+  pipeline.zremrangebyrank(key, 0, -2)
 }
 
 /** Body is untrusted in size as well as shape, so cap it before buffering. */
@@ -227,13 +164,17 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 // Written against the Node function runtime: it hands you (req, res) and ignores
-// any returned value. The edge runtime would allow web Request/Response instead,
-// but @vercel/blob is not edge-compatible, so this is the signature that fits.
+// any returned value. Returning a web Response instead makes the request hang
+// until timeout rather than erroring, which is a confusing way to find out.
 export default async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
   // The scene fetches cross-origin, so CORS is not optional here.
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'content-type')
+  // A day of preflight caching: the scene posts rarely, but every post it does
+  // make would otherwise pay for an OPTIONS round trip first.
+  res.setHeader('Access-Control-Max-Age', '86400')
+  res.setHeader('Cache-Control', 'no-store')
   res.setHeader('Content-Type', 'application/json')
 
   const send = (status: number, body: unknown) => {
@@ -251,12 +192,26 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // req.url arrives relative ("/api/chain?world=..."), which new URL() rejects.
   // The base is a throwaway: it is ignored whenever the URL is already absolute.
   const key = keyFor(new URL(req.url ?? '/', 'http://sambung.local').searchParams.get('world'))
-  const kv = store()
-  // No store configured yet: behave like an empty world instead of 500ing, so
-  // the scene degrades to local-only play rather than showing an error.
-  if (!kv) return send(200, { ...NO_STINT, week: NO_STINT })
+  const weekKey = `${key}:w:${isoWeek(now)}`
+  const redis = store()
+  // No store configured: behave like an empty world instead of 500ing, so the
+  // scene degrades to local-only play rather than showing an error.
+  if (!redis) return send(200, { ...NO_STINT, week: NO_STINT })
 
-  if (req.method === 'GET') return send(200, reply(await kv.get(key, now), now))
+  const read = async (): Promise<Reply> => {
+    const [all, week] = await Promise.all([top(redis, key), top(redis, weekKey)])
+    return { ...all, week }
+  }
+
+  if (req.method === 'GET') {
+    try {
+      return send(200, await read())
+    } catch {
+      // An unreachable store reads as an empty world rather than a 500: a record
+      // nobody can fetch is a smaller problem than a scene that shows an error.
+      return send(200, { ...NO_STINT, week: NO_STINT })
+    }
+  }
 
   if (req.method === 'POST') {
     let incoming: Stint | null
@@ -268,24 +223,20 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     }
     if (!incoming) return send(400, { error: 'malformed snapshot' })
 
-    const season = isoWeek(now)
-    const current = await kv.get(key, now)
-    // A rolled-over week starts from nothing, so the first run of a new week wins
-    // it outright; within a week the target can only be beaten, never lowered.
-    const weekBase = current.season === season ? current.week : NO_STINT
-
-    const beatsAllTime = incoming.record > current.record
-    const beatsWeek = incoming.record > weekBase.record
-    if (!beatsAllTime && !beatsWeek) return send(200, reply(current, now))
-
-    const next: Stored = {
-      record: beatsAllTime ? incoming.record : current.record,
-      chain: beatsAllTime ? incoming.chain : current.chain,
-      season,
-      week: beatsWeek ? incoming : weekBase
+    try {
+      const pipeline = redis.pipeline()
+      keepBest(pipeline, key, incoming)
+      keepBest(pipeline, weekKey, incoming)
+      // Refreshed on every write, so a week that is still being played stays
+      // alive and one that nobody touches ages out on its own.
+      pipeline.expire(weekKey, WEEK_TTL_SECONDS)
+      await pipeline.exec()
+      return send(200, await read())
+    } catch {
+      // Unlike a read, a failed write is not something to paper over: the scene
+      // retries a 5xx, and the player's record is worth one more attempt.
+      return send(503, { error: 'record store unavailable' })
     }
-    await kv.set(key, next)
-    return send(200, reply(next, now))
   }
 
   return send(405, { error: 'method not allowed' })

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Record store for the Sambung scene. Deployed separately from the DCL scene.",
   "dependencies": {
-    "@vercel/blob": "^2.8.0"
+    "@upstash/redis": "^1.38.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0"

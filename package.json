@@ -1,7 +1,7 @@
 {
   "name": "sambung",
   "version": "1.0.0",
-  "description": "Sambung \u2014 mobile-first Simon-says played with Decentraland avatar emotes.",
+  "description": "Sambung — mobile-first Simon-says played with Decentraland avatar emotes.",
   "license": "MIT",
   "scripts": {
     "start": "sdk-commands start",
@@ -23,7 +23,7 @@
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@types/node": "^26.3.0",
-    "@vercel/blob": "^2.8.0",
+    "@upstash/redis": "^1.38.3",
     "eslint": "^10.9.1",
     "jscpd": "^5.0.16",
     "prettier": "^3.9.6",

@@ -6,6 +6,12 @@ on:
   pull_request:
   # So the suite can be run against the live endpoint on demand, without pushing.
   workflow_dispatch:
+  # The end-to-end suite writes to the live record store on every run, and the
+  # free allowance is finite - it was spent once already, which suspended the
+  # store mid-week. Once a day plus on demand is the same signal at a fraction
+  # of the cost.
+  schedule:
+    - cron: '0 6 * * *'
 
 # A second push should not race the first through the same live record store.
 concurrency:
@@ -57,9 +63,9 @@ jobs:
 
   e2e:
     name: End-to-end against the live endpoint
-    # Only on main and on demand: every run writes real records to the blob
-    # store, so running it per branch push would litter it for no extra signal.
-    if: github.event_name != 'pull_request'
+    # Never on a push. See the schedule above: this suite costs real store
+    # operations, so it runs on a timer and when somebody asks for it.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
