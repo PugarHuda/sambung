@@ -9,10 +9,13 @@ export type UiContext = {
   highlight: () => number
   ticker: () => string
   onTap: (i: number) => void
+  onInvite: () => void
 }
 
 const WHITE = Color4.White()
 const FAINT = Color4.create(1, 1, 1, 0.65)
+/** Deliberately unlike any pad: an invite is not a move in the game. */
+const INVITE = Color4.create(1, 1, 1, 0.16)
 
 /**
  * Pad colours, resolved once.
@@ -79,6 +82,24 @@ export function setupUi(ctx: UiContext) {
             />
             <Label value={status(ctx.state)} fontSize={32} color={WHITE} />
             <Label value={ctx.ticker()} fontSize={16} color={FAINT} textAlign="top-center" />
+          </UiEntity>
+
+          {/* The one thing this game could not do: hand somebody the World.
+              Parked in the dead band between the ticker and the pads, on the
+              right, where a thumb already rests and no pad ever sits. */}
+          <UiEntity
+            uiTransform={{
+              positionType: 'absolute',
+              position: { bottom: '38%', right: '2%' },
+              width: '26%',
+              height: '7%',
+              justifyContent: 'center',
+              alignItems: 'center'
+            }}
+            uiBackground={{ color: INVITE }}
+            onMouseDown={ctx.onInvite}
+          >
+            <Label value="INVITE" fontSize={18} color={WHITE} textAlign="middle-center" />
           </UiEntity>
 
           {/* Thumb zone: 4x2 pads pinned to the bottom, sized in % so it survives

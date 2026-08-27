@@ -64,8 +64,13 @@ test.describe('the live world', () => {
     // error anywhere - the avatar simply stands still - so the ids are checked
     // against the catalyst that serves them, which is the only authority.
     const source = readFileSync('src/game.ts', 'utf8')
-    const ids = [...source.matchAll(/id: '([a-z]+)'/g)].map((m) => m[1])
-    expect(ids.length, 'no emote ids found in src/game.ts').toBe(8)
+    const pads = [...source.matchAll(/id: '([a-z]+)'/g)].map((m) => m[1])
+    expect(pads.length, 'no emote ids found in src/game.ts').toBe(8)
+    // The celebration emote is not a pad, and it is the one nobody would notice
+    // was broken: a record gets beaten and the avatar simply does not move.
+    const cheer = /CHEER_EMOTE = '([a-zA-Z]+)'/.exec(source)?.[1]
+    expect(cheer, 'CHEER_EMOTE not found in src/game.ts').toBeTruthy()
+    const ids = [...pads, cheer as string]
 
     const emotes = await json<{ metadata?: { name?: string } }[]>(
       await request.post(`${CATALYST}/content/entities/active`, {

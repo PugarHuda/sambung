@@ -13,6 +13,17 @@ export const EMOTES = [
 ] as const
 
 export const SHOW_STEP = 0.75 // seconds each emote stays lit during playback
+/** Below this the pads blur together and the chain stops being readable. */
+export const MIN_SHOW_STEP = 0.32
+/**
+ * What the whole world does when somebody beats the record.
+ *
+ * Verified against the catalyst as a real base emote by the live-world suite: a
+ * predefinedEmote that does not exist is not an error, the avatar just stands
+ * there. Everyone present sees this, which is the point - the payoff for beating
+ * a record should be visible to the room, not printed in your own ticker.
+ */
+export const CHEER_EMOTE = 'handsair'
 export const FAIL_HOLD = 1.4 // seconds the "missed" state is held before retry
 export const LIVES = 3 // misses a chain survives before its season closes
 
@@ -35,6 +46,18 @@ export function newState(): State {
 }
 
 /** Emote index currently lit by the game itself, or -1. */
+/**
+ * How long each emote is held during playback, for a chain of this length.
+ *
+ * Simon's escalation, and the reason a long chain stays a game rather than a
+ * memory exam: the sequence gets longer and faster at once. It also keeps the
+ * record replay watchable - a twenty-link record at the opening speed is fifteen
+ * seconds of cutscene before a visitor may touch anything.
+ */
+export function showStep(chainLength: number): number {
+  return Math.max(MIN_SHOW_STEP, SHOW_STEP - 0.03 * (chainLength - 1))
+}
+
 export function litIndex(s: State): number {
   return s.phase === 'showing' ? (s.chain[s.cursor] ?? -1) : -1
 }
@@ -73,8 +96,9 @@ export function tick(s: State, dt: number): void {
   s.timer += dt
 
   if (s.phase === 'showing') {
-    while (s.timer >= SHOW_STEP) {
-      s.timer -= SHOW_STEP
+    const step = showStep(s.chain.length)
+    while (s.timer >= step) {
+      s.timer -= step
       s.cursor++
       if (s.cursor >= s.chain.length) {
         s.phase = 'input'

@@ -12,11 +12,12 @@ import {
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
-import { triggerEmote } from '~system/RestrictedActions'
+import { triggerEmote, copyToClipboard } from '~system/RestrictedActions'
 import { getRealm } from '~system/Runtime'
 import { getPlayersInScene } from '~system/Players'
 import {
   EMOTES,
+  CHEER_EMOTE,
   State,
   newState,
   tap,
@@ -24,7 +25,7 @@ import {
   adopt,
   litIndex,
   parseChain,
-  SHOW_STEP
+  showStep
 } from './game.ts'
 import {
   Snapshot,
@@ -36,7 +37,9 @@ import {
   builders,
   demoAdvance,
   shouldPlayDemo,
-  worldKey
+  worldKey,
+  jumpUrl,
+  myMark
 } from './record.ts'
 import { CLIP, PAD_PITCH, MISS_PITCH } from './audio.ts'
 import { REQUEST_TIMEOUT_MS, withRetry } from './net.ts'
@@ -61,6 +64,8 @@ const RECORD_API: string = 'https://sambung-dcl.vercel.app/api/chain'
  */
 const DEFAULT_WORLD = 'rainbowroad.dcl.eth'
 let world = DEFAULT_WORLD
+/** The realm as the client names it - what an invite link has to point at. */
+let realmName = DEFAULT_WORLD
 
 const state: State = newState()
 const bus = new MessageBus()
@@ -252,13 +257,22 @@ function nameDemoStep() {
 function tickDemo(dt: number): boolean {
   if (!demoRunning()) return false
   demoTimer += dt
-  if (demoTimer < SHOW_STEP) return true
-  demoTimer -= SHOW_STEP
+  // The same ramp the game itself uses, so a long record is a quick flourish
+  // rather than a cutscene a visitor has to sit through.
+  const step = showStep(known.chain.length)
+  if (demoTimer < step) return true
+  demoTimer -= step
   const next = demoAdvance(demoIdx, known.chain.length, DEMO_MAX)
   if (next === -1) {
     const shown = Math.min(known.chain.length, DEMO_MAX)
     const rest = known.record > shown ? `…and ${known.record - shown} more. ` : ''
-    ticker = `${rest}Record ${known.record}. ${weeklyTarget()}`
+    // A returning player is told where they are in it. The record already knows
+    // who built every link, and being named in it is the reason to come back.
+    const mine = myMark(known.chain, myId().user)
+    ticker =
+      mine > 0
+        ? `Link ${mine} of that record is yours. It is still standing.`
+        : `${rest}Record ${known.record}. ${weeklyTarget()}`
     stopDemo()
     return false
   }
@@ -390,10 +404,15 @@ function onTap(i: number) {
     const mine = snapshotNow()
     const beatsAllTime = mine.record > known.record
     const beatsWeek = mine.record > (known.week?.record ?? 0)
-    if (beatsAllTime || beatsWeek) {
-      if (beatsAllTime) known = betterOf(known, mine)
-      void postRecord(mine)
+    if (beatsAllTime) {
+      // The room finds out the way it finds out everything else in this game:
+      // by watching an avatar. Beating the record used to change a number in
+      // your own corner of the screen and nothing else.
+      void triggerEmote({ predefinedEmote: CHEER_EMOTE })
+      ticker = `${me()} set the record at ${mine.record}.`
+      known = betterOf(known, mine)
     }
+    if (beatsAllTime || beatsWeek) void postRecord(mine)
   } else if (result === 'missed') {
     pulse(stage)
     ticker = `${me()} broke the chain at ${state.cursor + 1}`
@@ -433,10 +452,32 @@ async function resolveWorld() {
   try {
     const { realmInfo } = await getRealm({})
     world = worldKey(realmInfo, DEFAULT_WORLD)
+    realmName = (realmInfo?.realmName ?? '').trim() || DEFAULT_WORLD
     if (realmInfo?.isPreview) console.log(`[sambung] preview realm - records go to "${world}"`)
   } catch (err) {
     note('could not read the realm, using the default world key', err)
   }
+}
+
+/**
+ * Put this World on the player's clipboard.
+ *
+ * A World has no address a friend can guess and mobile has no share sheet for
+ * one, so without this the only way to invite somebody is to spell out a name
+ * ending in .dcl.eth over voice chat. A jump link opens Decentraland on this
+ * stage; pasting it into a chat is the whole invite.
+ */
+function onInvite() {
+  void copyToClipboard({ text: jumpUrl(realmName) })
+    .then(() => {
+      ticker = 'Link copied. Paste it to a friend — a chain needs somebody to dare.'
+    })
+    .catch((err: unknown) => {
+      // No clipboard on this client: the name is still something you can say out
+      // loud, so the invite degrades to words rather than disappearing.
+      note('could not copy the invite link', err)
+      ticker = `Tell a friend to open ${realmName} — search it in Places.`
+    })
 }
 
 /**
@@ -489,7 +530,7 @@ export function main() {
   spikeAvatar() // SPIKE: remove with the file
   clearMobileHud()
   buildStage()
-  setupUi({ state, highlight, ticker: () => ticker, onTap })
+  setupUi({ state, highlight, ticker: () => ticker, onTap, onInvite })
 
   watchArrivals()
   void seedOthers()

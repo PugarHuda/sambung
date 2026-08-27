@@ -8,8 +8,10 @@ import {
   adopt,
   litIndex,
   parseChain,
+  showStep,
   MAX_LIVE_CHAIN,
   SHOW_STEP,
+  MIN_SHOW_STEP,
   FAIL_HOLD,
   LIVES
 } from './game.ts'
@@ -176,4 +178,23 @@ test('a rejected broadcast leaves the round untouched', () => {
   // adopt is never reached with an unparsed chain - this is the guard in index.ts
   // written down as a test, so removing it fails here.
   assert.deepEqual(s.chain, before)
+})
+
+test('playback speeds up as the chain grows, but never past readable', () => {
+  assert.equal(showStep(1), SHOW_STEP)
+  assert.ok(showStep(10) < showStep(5), 'a longer chain must play faster')
+  assert.equal(showStep(50), MIN_SHOW_STEP, 'the floor holds')
+  assert.ok(showStep(200) >= MIN_SHOW_STEP)
+})
+
+test('a long chain still finishes playback and hands over the turn', () => {
+  const s = newState()
+  // Adopted rather than assigned, so the phase is set behind a function call and
+  // the loop below is still allowed to ask what it is.
+  adopt(s, [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3])
+  // Driven at a real frame time rather than a whole step, because the ramp means
+  // the step is no longer a number the caller can assume.
+  for (let frame = 0; frame < 60 * 30 && s.phase !== 'input'; frame++) tick(s, 1 / 60)
+  assert.equal(s.phase, 'input')
+  assert.equal(s.cursor, 0)
 })

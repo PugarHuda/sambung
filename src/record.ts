@@ -173,3 +173,28 @@ export function isoWeek(at: Date): string {
   const week = 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 86400000))
   return `${thursdayYear}-W${String(week).padStart(2, '0')}`
 }
+
+/**
+ * The link that puts a friend on this exact stage.
+ *
+ * The buildathon asks for a reason to invite people, and a World is only
+ * reachable by name - there is no in-client "share this place" on mobile. A jump
+ * link is the one thing a player can paste into a chat, and tapping it opens
+ * Decentraland straight here rather than at Genesis Plaza.
+ */
+export function jumpUrl(realmName: string): string {
+  const world = realmName.trim() || 'rainbowroad.dcl.eth'
+  return `https://decentraland.org/jump/?realm=${encodeURIComponent(world)}`
+}
+
+/**
+ * Where this player sits in a stored record, 1-based, or 0 if they do not.
+ *
+ * The record already carries who added each link, and a returning player being
+ * told their link is still standing is the difference between a leaderboard and
+ * something with your name in it.
+ */
+export function myMark(chain: Link[], user: string): number {
+  if (!user) return 0
+  return chain.findIndex((l) => l.user === user) + 1
+}

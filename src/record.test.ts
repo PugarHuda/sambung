@@ -10,6 +10,8 @@ import {
   shouldPlayDemo,
   isoWeek,
   worldKey,
+  jumpUrl,
+  myMark,
   EMPTY,
   type Snapshot
 } from './record.ts'
@@ -197,4 +199,25 @@ test('text from another player cannot run away with the ticker', () => {
   assert.equal(clampText('WAVE', 12), 'WAVE')
   assert.equal(clampText(42), '')
   assert.equal(clampText(undefined), '')
+})
+
+test('the invite link points at this world, not at Genesis Plaza', () => {
+  assert.equal(
+    jumpUrl('RainbowRoad.dcl.eth'),
+    'https://decentraland.org/jump/?realm=RainbowRoad.dcl.eth'
+  )
+  // A realm the scene could not read still has to produce a usable link.
+  assert.match(jumpUrl(''), /realm=rainbowroad\.dcl\.eth$/)
+  // Anything odd in a realm name is encoded, never pasted raw into a URL.
+  assert.match(jumpUrl('a b&c'), /realm=a%20b%26c$/)
+})
+
+test('a returning player is found in the record by id, not by name', () => {
+  const chain = [link(0, '0xa', 'Ayu'), link(1, '0xb', 'Lynx'), link(2, '0xa', 'Ayu')]
+  assert.equal(myMark(chain, '0xb'), 2, 'the position is 1-based, for reading aloud')
+  assert.equal(myMark(chain, '0xa'), 1, 'the first link wins when a player has several')
+  assert.equal(myMark(chain, '0xzz'), 0)
+  // A guest with no id must never match the first anonymous link in the record.
+  assert.equal(myMark([link(0, '', 'Someone')], ''), 0)
+  assert.equal(myMark([], '0xa'), 0)
 })
