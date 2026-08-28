@@ -25,3 +25,7 @@ assets/scene/main.composite
 # tooling, not source, and it appears only where install scripts are allowed to
 # run - which is why CI saw it and this machine did not.
 dclcontext/
+
+# Claude Code harness config and installed skills (npx impeccable install). Per-machine.
+.claude/
+.impeccable/config.local.json
