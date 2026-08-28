@@ -36,7 +36,6 @@ import {
   parseAuthors,
   clampText,
   betterOf,
-  builders,
   demoAdvance,
   shouldPlayDemo,
   worldKey,
@@ -89,7 +88,13 @@ let authors: { user: string; name: string }[] = []
 const others = new Set<string>()
 let known: Snapshot = EMPTY
 
-let ticker = 'Chain up an emote, then dare the next player to repeat it.'
+// The only onboarding a first-timer gets, so it states the rule, not the mood:
+// pads that light are the chain; you repeat them; then you add one.
+let ticker = 'Tap a pad: your avatar performs it, and the chain starts. Repeat it, then add a link.'
+
+/** Seconds left of the "chain is gone" line after a season ends. */
+const ENDED_HOLD = 3
+let endedTimer = 0
 
 // The record plays itself back once on arrival: a visitor should watch what the
 // record IS before being asked to beat it. Never a memory test — any tap skips it.
@@ -179,7 +184,11 @@ async function loadRecord() {
     // which is worth knowing about even though play continues regardless.
     if (!adoptSnapshot(parseSnapshot(await res.json()))) return
     if (shouldPlayDemo(known.record, played, state.chain.length)) {
-      ticker = `Record ${known.record}, built by ${builders(known)} players. Watch.`
+      // One line for the whole replay. Naming each builder per step rewrote the
+      // ticker every 0.4 s, which made the names - the reason to come back -
+      // the one thing on screen nobody could read.
+      const links = known.record === 1 ? '1 link' : `${known.record} links`
+      ticker = `The record: ${links}, built by ${builderLine(known)}.`
       startDemo()
     }
   } catch (err) {
@@ -229,9 +238,39 @@ function adoptSnapshot(snap: Snapshot | null): boolean {
  * reason to come back on another day.
  */
 function weeklyTarget(): string {
-  const week = known.week?.record ?? 0
-  if (week === 0) return 'Nobody has set a chain this week. Go first.'
-  return `This week's best is ${week} — beat it.`
+  const week = known.week
+  if (!week || week.record === 0) return 'Nobody has set a chain this week. Go first.'
+  // Being told to beat your own number is a taunt; being told it is yours is
+  // the reason to come back and defend it.
+  const mine = week.chain[week.chain.length - 1]?.user === myId().user
+  if (mine) return `This week's best is yours at ${week.record}. Keep it.`
+  return `This week's best is ${week.record} — beat it.`
+}
+
+/**
+ * The number the player is actually chasing. The all-time record can be years
+ * of players deep; the week's best is the one a visitor today can take, so it
+ * is the one the header shows whenever the endpoint has told us about a week.
+ */
+function target(): { label: string; n: number } {
+  if (known.week) return { label: "WEEK'S BEST", n: known.week.record }
+  return { label: 'RECORD', n: state.record }
+}
+
+/** Distinct builders in the order they first appear, for "built by Ana, Bo and 3 more". */
+function builderLine(snap: Snapshot): string {
+  const names: string[] = []
+  const seen = new Set<string>()
+  for (const l of snap.chain) {
+    if (seen.has(l.user)) continue
+    seen.add(l.user)
+    names.push(l.name)
+  }
+  const shown = names.slice(0, 3)
+  const rest = names.length - shown.length
+  const last = shown[shown.length - 1] ?? 'nobody'
+  const list = shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${last}` : last
+  return rest > 0 ? `${list} and ${rest} more` : list
 }
 
 function demoRunning(): boolean {
@@ -246,13 +285,6 @@ function startDemo() {
   if (known.record === 0) return
   demoIdx = 0
   demoTimer = 0
-  nameDemoStep() // the first builder gets credited too, not just the rest
-}
-
-function nameDemoStep() {
-  const link = known.chain[demoIdx]
-  const emote = link && EMOTES[link.emote]
-  if (link && emote) ticker = `${link.name} added ${emote.label}`
 }
 
 /** Advance the record playback. Returns true while it still owns the pillars. */
@@ -274,12 +306,11 @@ function tickDemo(dt: number): boolean {
     ticker =
       mine > 0
         ? `Link ${mine} of that record is yours. It is still standing.`
-        : `${rest}Record ${known.record}. ${weeklyTarget()}`
+        : `${rest}That was the record. ${weeklyTarget()}`
     stopDemo()
     return false
   }
   demoIdx = next
-  nameDemoStep()
   return true
 }
 
@@ -290,6 +321,10 @@ function highlight(): number {
     if (demoTimer >= showStep(known.chain.length) * LIT_FRACTION) return -1
     return known.chain[demoIdx]?.emote ?? -1
   }
+  // A miss shows the pad it should have been, for as long as the miss is held.
+  // The wrong pad used to light exactly like a right one, so a player learned
+  // "missed" from the thud and the word and never from the pads.
+  if (state.phase === 'failed') return state.chain[state.cursor] ?? -1
   const shown = litIndex(state)
   if (shown >= 0) return shown
   return flashTimer > 0 ? flashIdx : -1
@@ -395,14 +430,18 @@ function onTap(i: number) {
 
   // Skipping is always allowed: a player who wants to start must never be held
   // hostage by someone else's replay.
-  if (demoRunning()) stopDemo()
+  const skipped = demoRunning()
+  if (skipped) stopDemo()
 
   const result = tap(state, i)
   if (result === 'ignored') return
 
   played = true
-  flashIdx = i
-  flashTimer = FLASH
+  // No flash on a miss: highlight() shows the expected pad instead.
+  if (result !== 'missed') {
+    flashIdx = i
+    flashTimer = FLASH
+  }
 
   // The avatar performs the emote, so everyone in the world reads your input
   // without needing any UI of yours. This is the whole social surface.
@@ -410,7 +449,8 @@ function onTap(i: number) {
 
   if (result === 'added') {
     authors.push(myId())
-    ticker = `${me()} added ${emote.label} — chain is ${state.chain.length}`
+    // Your own thumb, your own screen: no name, no count - the header has it.
+    ticker = skipped ? `Record skipped. You added ${emote.label}.` : `You added ${emote.label}.`
     bus.emit('chain', { chain: state.chain, authors, by: me(), label: emote.label })
   } else if (result === 'completed') {
     // A run that beats this week's target but not the all-time one is still news:
@@ -427,11 +467,18 @@ function onTap(i: number) {
       ticker = `${me()} set the record at ${mine.record}.`
       known = betterOf(known, mine)
       bus.emit('record', mine)
+    } else if (beatsWeek) {
+      // The week is the target on the ticker, so taking it has to be said.
+      ticker = `${me()} took this week's best at ${mine.record}.`
+    } else {
+      ticker = `Chain of ${mine.record} repeated.`
     }
+    if (beatsWeek) known = { ...known, week: mine }
     if (beatsAllTime || beatsWeek) void postRecord(mine)
   } else if (result === 'missed') {
     pulse(stage)
-    ticker = `${me()} broke the chain at ${state.cursor + 1}`
+    // Position, not length: the header and the status carry the length.
+    ticker = `You missed link ${state.cursor + 1} of ${state.chain.length}.`
   }
 }
 
@@ -546,7 +593,16 @@ export function main() {
   spikeAvatar() // SPIKE: remove with the file
   clearMobileHud()
   buildStage()
-  setupUi({ state, highlight, ticker: () => ticker, onTap, onInvite })
+  setupUi({
+    state,
+    highlight,
+    demo: demoRunning,
+    ended: () => endedTimer,
+    target,
+    ticker: () => ticker,
+    onTap,
+    onInvite
+  })
 
   watchArrivals()
   void seedOthers()
@@ -574,7 +630,7 @@ export function main() {
     authors = parseAuthors(m.authors, chain.length)
     const by = clampText(m.by) || 'Someone'
     const label = clampText(m.label, 12) || 'an emote'
-    ticker = `${by} added ${label} — chain is ${state.chain.length}`
+    ticker = `${by} added ${label}.`
   })
 
   // A record set by somebody else in the room. Without this every other client
@@ -600,10 +656,12 @@ export function main() {
     tick(state, dt)
     if (prevChain > 0 && state.chain.length === 0) {
       authors = [] // stays in lockstep with the chain it describes
-      ticker = `Chain broke at ${prevChain}. ${weeklyTarget()}`
+      endedTimer = ENDED_HOLD
+      ticker = `Chain of ${prevChain} is gone. ${weeklyTarget()}`
     }
     prevChain = state.chain.length
     if (flashTimer > 0) flashTimer -= dt
+    if (endedTimer > 0) endedTimer -= dt
     syncPillars()
   })
 }

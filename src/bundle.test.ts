@@ -330,9 +330,11 @@ test(
     const d = decoder()
     const labels = decoded(inventory(host.frames, d), UI_TEXT, (b) => d.PBUiText.decode(b).value)
     for (const e of EMOTES) assert.ok(labels.includes(e.label), `no pad labelled ${e.label}`)
+    // Offered only while a tap is not a move, which the opening state is.
     assert.ok(labels.includes('INVITE'), 'the invite pad never reached the renderer')
+    assert.ok(labels.includes('SAMBUNG'), 'the product name is nowhere on screen')
     assert.ok(
-      labels.some((l) => l.startsWith('TAP ANY PAD')),
+      labels.some((l) => l.startsWith('TAP A PAD')),
       `the opening prompt is missing; labels were ${labels.join(' | ')}`
     )
   }

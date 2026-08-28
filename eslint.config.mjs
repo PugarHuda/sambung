@@ -12,6 +12,10 @@ export default tseslint.config(
       'server/.vercel/**',
       'playwright-report/**',
       'test-results/**',
+      // The Claude Code harness and the design skill installed into it (see
+      // .gitignore): third-party tooling, not this project's code.
+      '.claude/**',
+      '.impeccable/**',
       // Its own config file: linting it type-aware would need it inside the
       // TypeScript project, which it is not.
       'eslint.config.mjs'

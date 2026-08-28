@@ -11,3 +11,7 @@ images
 # tooling, not source, and it appears only where install scripts are allowed to
 # run - which is why CI saw it and this machine did not.
 dclcontext/
+
+# Claude Code harness config and the Impeccable design skill: not ours to format.
+.claude/
+.impeccable/
