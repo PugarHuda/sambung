@@ -264,7 +264,9 @@ function builderLine(snap: Snapshot): string {
   for (const l of snap.chain) {
     if (seen.has(l.user)) continue
     seen.add(l.user)
-    names.push(l.name)
+    // Names are stored at up to 40 characters; three of those would wrap the
+    // replay line to four rows on a phone.
+    names.push(clampText(l.name, 14) || 'Someone')
   }
   const shown = names.slice(0, 3)
   const rest = names.length - shown.length

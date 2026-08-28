@@ -110,7 +110,7 @@ export function setupUi(ctx: UiContext) {
                 World's name, which belongs to the organiser. */}
             <Label value="SAMBUNG" fontSize={14} color={FAINT} />
             <Label
-              value={`${target.label} ${target.n}   ·   LIVES ${ctx.state.lives}`}
+              value={`${target.label} ${target.n} · LIVES ${ctx.state.lives}`}
               fontSize={18}
               color={FAINT}
             />
