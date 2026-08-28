@@ -19,8 +19,12 @@ listed in Decentraland Places.
 - **Eight big pads, one thumb.** No walking, no aiming, no camera control, no typing.
 - **The native HUD is cleared.** `TouchScreenControls` hides the joystick, crosshair and
   gamepad buttons, so nothing overlaps the thumb zone or eats a tap meant for a pad.
-- **The UI lives inside `ScreenInsetArea`,** so the header and the pad grid respect the
-  notch, the status bar and the home indicator instead of hiding under them.
+- **The UI draws only where the renderer says it may.** `UiCanvasInformation` reports the
+  device margin (notch, home indicator) and the client's own HUD reservation (chat and
+  emotes down the left edge on mobile, action buttons bottom-right); the UI takes the
+  intersection, and lays the pads out as a 4×2 band in portrait or a 2×4 column on the
+  thumb side in landscape. Proven from the renderer's side: the bundle test hands the scene
+  a canvas and decodes the pad geometry it sends back.
 - **Colour is the signal, words are the backup** — and the label ink is derived per pad
   from its WCAG contrast ratio (`src/contrast.ts`), because four of the eight pads are
   too pale to carry white text at the moment they light up.
@@ -68,17 +72,24 @@ separately from the scene and keyed by World.
 The scene asks the realm which World it is in, so a local preview writes to its own
 `preview-` key and can never touch the live record.
 
+The same host carries `api/note`: a capped list per World of what the scene reported from
+real devices — an arrival with the platform the client names itself, the first tap, a
+record, an invite, and every error the scene swallows for the player's sake. No user id,
+name or address is ever stored, and the suite asserts that extra fields are dropped. It is
+the only way to know what a judge's phone did.
+
 ## Run it
 
 ```bash
 npm install
 npm start           # local preview
-npm test            # 78 unit, contract, schema and bundle-boot tests
+npm test            # 89 unit, contract, schema, layout and bundle-boot tests
 npm run budget      # triangle, asset and audio budget
-npm run test:e2e    # 41 Playwright tests against the live endpoint, 5 browser engines
+npm run test:e2e    # 61 Playwright tests against the live endpoint, 5 browser engines
 npm run lint        # eslint, type-aware
 npm run sound       # regenerate sounds/pad.wav from scripts/make-sound.mjs
 npm run serve       # the record endpoint on localhost, against the real store
+npm run notes       # what real devices reported: arrivals, first taps, records, errors
 ```
 
 Use the preview on an actual phone on the same network. Desktop lies about both
@@ -93,6 +104,7 @@ The test suite is deliberately layered:
 | `src/scene-json.test.ts`     | `scene.json` against Decentraland's own schema, and the spawn region       |
 | `src/bundle.test.ts`         | The real `bin/index.js` booting inside a stubbed scene runtime             |
 | `e2e/record-api.spec.ts`     | CORS, preflight, concurrency, malformed and oversized payloads             |
+| `e2e/note-api.spec.ts`       | The beacon: shape allow-list, clamping, and that nothing personal is kept  |
 | `e2e/abuse.spec.ts`          | A caller that writes like a loop is cut off; runs last, alone              |
 | `e2e/deployed-world.spec.ts` | Whether the World actually serves what this repo says it does              |
 
@@ -129,10 +141,12 @@ the result, and confirm the World's access is **Public**.
 | `src/net.ts`                 | Timeout and retry policy, with the clock injected.                    |
 | `src/contrast.ts`            | WCAG luminance maths that picks each pad's label ink.                 |
 | `src/audio.ts`               | The pitch table: one clip, eight voices.                              |
+| `src/layout.ts`              | Portrait or landscape, inside the frame the renderer reports.         |
 | `scripts/serve-endpoint.mjs` | The endpoint on localhost, for proving it before a deploy.            |
 | `src/ui.tsx`                 | The thumb-zone pad grid and the status header.                        |
 | `src/index.ts`               | Stage, emotes, audio, `MessageBus` sync, engine wiring.               |
 | `server/api/chain.ts`        | The record endpoint. Deploys to Vercel (Singapore, beside the store). |
+| `server/api/note.ts`         | The beacon endpoint: the scene's console, made reachable.             |
 | `scripts/scene-budget.mjs`   | The performance claim, asserted from the source.                      |
 | `scripts/make-sound.mjs`     | Generates the one audio file the scene ships.                         |
 
