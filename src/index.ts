@@ -7,7 +7,8 @@ import {
   Material,
   AudioSource,
   TouchScreenControls,
-  InputAction
+  InputAction,
+  pointerEventsSystem
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
@@ -331,6 +332,14 @@ function buildStage() {
       pitch: PAD_PITCH[i] ?? 1,
       volume: 1
     })
+    // The pillar is a pad too. The collider was already there for nothing; now
+    // tapping the thing that lit counts the same as tapping its button, which
+    // is how a desktop judge with a mouse and no thumb zone plays at all, and
+    // how a phone player who looks up from the grid keeps playing.
+    pointerEventsSystem.onPointerDown(
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: e.label, maxDistance: 14 } },
+      () => onTap(i)
+    )
     paint(entity, e.hex, false)
     return { entity, hex: e.hex, lit: false }
   })

@@ -2,6 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { createContext, runInContext } from 'node:vm'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { buildSync } from 'esbuild'
+import { EMOTES } from './game.ts'
+import { PAD_PITCH, MISS_PITCH } from './audio.ts'
 
 // Boots the artifact that actually gets deployed - bin/index.js - inside a stub
 // of the scene runtime.
@@ -18,6 +24,8 @@ const BUNDLE = 'bin/index.js'
 
 type Host = {
   crdtCalls: number
+  /** Every byte the scene ever sent to the renderer, in order. */
+  frames: Uint8Array[]
   emotes: string[]
   fetched: string[]
   realmAsked: number
@@ -29,6 +37,7 @@ type Scene = { onStart?: () => Promise<void>; onUpdate?: (dt: number) => Promise
 function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene; host: Host } {
   const host: Host = {
     crdtCalls: 0,
+    frames: [],
     emotes: [],
     fetched: [],
     realmAsked: 0,
@@ -40,8 +49,11 @@ function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene
     '~system/EngineApi': {
       // Plain promises rather than async functions: nothing here awaits, and a
       // stub that pretends to is just noise the linter has to read past.
-      crdtSendToRenderer: () => {
+      crdtSendToRenderer: ({ data }: { data: Uint8Array }) => {
         host.crdtCalls++
+        // Copied into this realm: a Uint8Array born inside the vm context fails
+        // instanceof checks out here, and protobufjs answers "illegal buffer".
+        host.frames.push(new Uint8Array(data))
         return Promise.resolve(empty)
       },
       crdtGetState: () => Promise.resolve({ ...empty, hasEntities: false }),
@@ -176,5 +188,172 @@ test(
       '~system/Players'
     ])
     for (const module of asked) assert.ok(known.has(module), `unstubbed host module ${module}`)
+  }
+)
+
+// ---------------------------------------------------------------------------
+// What the renderer would actually draw.
+//
+// The scene talks to the renderer in the CRDT wire protocol, and @dcl/ecs ships
+// the reader for it. Decoding the bytes the bundle sent gives the scene's real
+// inventory - not the source's intent, the renderer's input - which is the
+// nearest thing to a screenshot that exists without a client. The decoder is
+// bundled on the fly because @dcl/ecs is published for bundlers, not for Node.
+
+type CrdtMessage = { type: number; entityId?: number; componentId?: number; data?: Uint8Array }
+type Decoder = {
+  ReadWriteByteBuffer: new (buf: Uint8Array) => object
+  readMessage: (buf: object) => CrdtMessage | null
+  PBMeshRenderer: { decode: (d: Uint8Array) => { mesh?: { $case: string } } }
+  PBAudioSource: { decode: (d: Uint8Array) => { audioClipUrl: string; pitch?: number } }
+  PBUiText: { decode: (d: Uint8Array) => { value: string } }
+  PBAvatarShape: { decode: (d: Uint8Array) => { id: string; expressionTriggerId?: string } }
+}
+
+/** Component ids from @dcl/ecs component-names.gen: the wire protocol's vocabulary. */
+const MESH_RENDERER = 1018
+const AUDIO_SOURCE = 1020
+const UI_TEXT = 1052
+const AVATAR_SHAPE = 1080
+const POINTER_EVENTS = 1062
+const PUT_COMPONENT = 1
+
+let cached: Decoder | undefined
+function decoder(): Decoder {
+  if (cached) return cached
+  // Written to disk and required, rather than evaluated from a string: the
+  // same result with no eval anywhere in the test suite.
+  const outfile = join(tmpdir(), `sambung-crdt-decoder-${process.pid}.cjs`)
+  buildSync({
+    stdin: {
+      contents: `
+        export { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer'
+        export { readMessage } from '@dcl/ecs/dist/serialization/crdt/message'
+        export { PBMeshRenderer } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/mesh_renderer.gen'
+        export { PBAudioSource } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/audio_source.gen'
+        export { PBUiText } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/ui_text.gen'
+        export { PBAvatarShape } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/avatar_shape.gen'
+      `,
+      resolveDir: process.cwd(),
+      loader: 'ts'
+    },
+    bundle: true,
+    format: 'cjs',
+    platform: 'node',
+    outfile,
+    logLevel: 'silent'
+  })
+  cached = createRequire(import.meta.url)(outfile) as Decoder
+  return cached
+}
+
+/** The last value of each (entity, component) the scene put, grouped by component. */
+function inventory(frames: Uint8Array[], d: Decoder): Map<number, Map<number, Uint8Array>> {
+  const byComponent = new Map<number, Map<number, Uint8Array>>()
+  for (const frame of frames) {
+    const buf = new d.ReadWriteByteBuffer(frame)
+    for (;;) {
+      const msg = d.readMessage(buf)
+      if (!msg) break
+      if (msg.type !== PUT_COMPONENT) continue
+      if (msg.componentId === undefined || msg.entityId === undefined || !msg.data) continue
+      const perEntity = byComponent.get(msg.componentId) ?? new Map<number, Uint8Array>()
+      perEntity.set(msg.entityId, msg.data)
+      byComponent.set(msg.componentId, perEntity)
+    }
+  }
+  return byComponent
+}
+
+function decoded<T>(
+  put: Map<number, Map<number, Uint8Array>>,
+  id: number,
+  decode: (d: Uint8Array) => T
+): T[] {
+  return [...(put.get(id)?.values() ?? [])].map(decode)
+}
+
+test(
+  'the renderer is handed exactly the stage the budget was counted for',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    const host = await run({ realmName: 'rainbowroad.dcl.eth' })
+    const d = decoder()
+    const meshes = decoded(
+      inventory(host.frames, d),
+      MESH_RENDERER,
+      (b) => d.PBMeshRenderer.decode(b).mesh?.$case
+    )
+    // One stage cylinder and one box per pad: the same nine primitives that
+    // scripts/scene-budget.mjs prices at 192 triangles.
+    assert.equal(meshes.filter((m) => m === 'cylinder').length, 1)
+    assert.equal(meshes.filter((m) => m === 'box').length, EMOTES.length)
+    assert.equal(meshes.length, EMOTES.length + 1, `unexpected meshes: ${meshes.join(',')}`)
+    // Every pillar is tappable in the world, not only from the UI grid: a
+    // collider with no pointer event is a wall, and that is what they were.
+    // Counted by intersection: the UI grid's pads carry pointer events too, so
+    // the bare count is the pillars plus the whole thumb zone.
+    const put = inventory(host.frames, d)
+    const meshEntities = new Set(put.get(MESH_RENDERER)?.keys() ?? [])
+    const tappable = [...(put.get(POINTER_EVENTS)?.keys() ?? [])].filter((e) => meshEntities.has(e))
+    assert.equal(tappable.length, EMOTES.length, `${tappable.length} pillars answer a tap`)
+  }
+)
+
+test(
+  'every pad has a voice at its own pitch, and the stage has the miss',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    const host = await run({ realmName: 'rainbowroad.dcl.eth' })
+    const d = decoder()
+    const sources = decoded(inventory(host.frames, d), AUDIO_SOURCE, (b) =>
+      d.PBAudioSource.decode(b)
+    )
+    assert.equal(sources.length, EMOTES.length + 1)
+    for (const s of sources) assert.equal(s.audioClipUrl, 'sounds/pad.wav')
+    const pitches = sources.map((s) => s.pitch ?? 1).sort((a, b) => a - b)
+    const expected = [MISS_PITCH, ...PAD_PITCH].sort((a, b) => a - b)
+    for (let i = 0; i < expected.length; i++) {
+      assert.ok(
+        Math.abs((pitches[i] ?? 0) - (expected[i] ?? 0)) < 1e-5,
+        `pitch ${i}: renderer got ${pitches[i]}, the audio table says ${expected[i]}`
+      )
+    }
+  }
+)
+
+test(
+  'the UI the renderer receives has a pad per emote, and the invite',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    const host = await run({ realmName: 'rainbowroad.dcl.eth' })
+    const d = decoder()
+    const labels = decoded(inventory(host.frames, d), UI_TEXT, (b) => d.PBUiText.decode(b).value)
+    for (const e of EMOTES) assert.ok(labels.includes(e.label), `no pad labelled ${e.label}`)
+    assert.ok(labels.includes('INVITE'), 'the invite pad never reached the renderer')
+    assert.ok(
+      labels.some((l) => l.startsWith('TAP ANY PAD')),
+      `the opening prompt is missing; labels were ${labels.join(' | ')}`
+    )
+  }
+)
+
+test(
+  'the ghost spike is still on stage, so the AvatarShape question can be answered',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    // Deliberately a test that will be deleted with src/spike-avatar.ts: while
+    // the spike ships, a deploy that silently dropped it would waste the one
+    // field test the ghost decision depends on.
+    const host = await run({ realmName: 'rainbowroad.dcl.eth' })
+    const d = decoder()
+    const ghosts = decoded(inventory(host.frames, d), AVATAR_SHAPE, (b) =>
+      d.PBAvatarShape.decode(b)
+    )
+    assert.equal(ghosts.length, 1)
+    const ghost = ghosts[0]
+    assert.ok(ghost)
+    assert.equal(ghost.id, 'spike-ghost')
+    assert.ok(ghost.expressionTriggerId, 'the ghost must be told to perform')
   }
 )
