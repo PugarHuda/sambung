@@ -72,8 +72,11 @@ Binding constraints (confirmed):
 - **Primitives only.** One cylinder, eight boxes, no imported models, no textures, no
   custom materials, one 13 KB generated WAV. `npm run budget` fails CI otherwise. UI labels
   are words plus colour, never icon textures.
-- **One thumb.** The 4×2 pad grid owns the bottom 34% of the screen inside
-  `ScreenInsetArea`; the header sits near the top. Layout is percentage-based so it holds on
+- **One thumb.** The eight pads own a thumb zone: a 4×2 band along the bottom in portrait,
+  a 2×4 column on the right in landscape, chosen at runtime from the canvas the renderer
+  reports (`UiCanvasInformation`). The UI draws only inside the intersection of the device
+  margin and the client's HUD reservation (`interactableArea`), so it never sits under the
+  client's own chat, profile or action buttons. Layout is percentage-based so it holds on
   every aspect ratio. Nothing may require a second hand, a hover, or precision.
 - **The eight pad colours are fixed** (`src/game.ts`); label ink per pad is derived from
   WCAG contrast (`src/contrast.ts`) and tested. A colour change must keep the tests green.

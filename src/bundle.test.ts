@@ -32,9 +32,16 @@ type Host = {
   errors: string[]
 }
 type Scene = { onStart?: () => Promise<void>; onUpdate?: (dt: number) => Promise<void> }
+type Realm = { realmName: string; isPreview?: boolean }
+type Rect = { top: number; right: number; bottom: number; left: number }
+/** What the renderer would report about the screen, if anything. */
+type Canvas = { width: number; height: number; screenInsetArea?: Rect; interactableArea?: Rect }
 
-/** Nothing on the wire: the stub answers every RPC with an empty payload. */
-function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene; host: Host } {
+/**
+ * Nothing on the wire, unless a canvas is given: then the first reply from the
+ * renderer carries UiCanvasInformation, exactly as a client would send it.
+ */
+function boot(realm: Realm, canvas?: Canvas): { scene: Scene; host: Host } {
   const host: Host = {
     crdtCalls: 0,
     frames: [],
@@ -44,6 +51,10 @@ function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene
     errors: []
   }
   const empty = { data: [] as Uint8Array[] }
+  // Sent once, on the first frame, then never again - a renderer only repeats
+  // it when the canvas changes. Filled in once the vm context exists, because
+  // the bytes have to be born inside it (see below).
+  let pending: Uint8Array[] = []
 
   const systems: Record<string, unknown> = {
     '~system/EngineApi': {
@@ -54,7 +65,9 @@ function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene
         // Copied into this realm: a Uint8Array born inside the vm context fails
         // instanceof checks out here, and protobufjs answers "illegal buffer".
         host.frames.push(new Uint8Array(data))
-        return Promise.resolve(empty)
+        const reply = { data: pending }
+        pending = []
+        return Promise.resolve(reply)
       },
       crdtGetState: () => Promise.resolve({ ...empty, hasEntities: false }),
       subscribe: () => Promise.resolve({}),
@@ -122,6 +135,13 @@ function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene
   }
   const context = createContext(sandbox)
   ;(sandbox as { globalThis: unknown }).globalThis = context
+  if (canvas) {
+    // The same realm rule in the other direction: a Uint8Array from this realm
+    // fails instanceof inside the vm, so the message is rebuilt with the vm's
+    // own constructor before the scene ever sees it.
+    const VmU8 = runInContext('Uint8Array', context) as typeof Uint8Array
+    pending = [new VmU8(canvasMessage(canvas))]
+  }
 
   runInContext(readFileSync(BUNDLE, 'utf8'), context, { filename: BUNDLE })
   // The host object is handed back by reference, not copied: the counters are
@@ -130,8 +150,8 @@ function boot(realm: { realmName: string; isPreview?: boolean }): { scene: Scene
 }
 
 /** Boot, then run a second of frames so the async work has somewhere to land. */
-async function run(realm: { realmName: string; isPreview?: boolean }): Promise<Host> {
-  const { scene, host } = boot(realm)
+async function run(realm: Realm, canvas?: Canvas): Promise<Host> {
+  const { scene, host } = boot(realm, canvas)
   assert.ok(typeof scene.onStart === 'function', 'the bundle must export onStart')
   assert.ok(typeof scene.onUpdate === 'function', 'the bundle must export onUpdate')
   await scene.onStart()
@@ -201,9 +221,25 @@ test(
 // bundled on the fly because @dcl/ecs is published for bundlers, not for Node.
 
 type CrdtMessage = { type: number; entityId?: number; componentId?: number; data?: Uint8Array }
+type ByteBuf = { toBinary(): Uint8Array }
 type Decoder = {
-  ReadWriteByteBuffer: new (buf: Uint8Array) => object
+  ReadWriteByteBuffer: new (buf?: Uint8Array) => ByteBuf
   readMessage: (buf: object) => CrdtMessage | null
+  PutComponentOperation: {
+    write: (
+      entity: number,
+      timestamp: number,
+      componentId: number,
+      data: Uint8Array,
+      buf: ByteBuf
+    ) => void
+  }
+  PBUiCanvasInformation: {
+    encode: (m: Canvas & { devicePixelRatio: number }) => { finish(): Uint8Array }
+  }
+  PBUiTransform: {
+    decode: (d: Uint8Array) => { parent?: number; width?: number; height?: number }
+  }
   PBMeshRenderer: { decode: (d: Uint8Array) => { mesh?: { $case: string } } }
   PBAudioSource: { decode: (d: Uint8Array) => { audioClipUrl: string; pitch?: number } }
   PBUiText: { decode: (d: Uint8Array) => { value: string } }
@@ -216,7 +252,10 @@ const AUDIO_SOURCE = 1020
 const UI_TEXT = 1052
 const AVATAR_SHAPE = 1080
 const POINTER_EVENTS = 1062
+const UI_TRANSFORM = 1050
+const UI_CANVAS_INFORMATION = 1054
 const PUT_COMPONENT = 1
+const ROOT_ENTITY = 0
 
 let cached: Decoder | undefined
 function decoder(): Decoder {
@@ -229,6 +268,9 @@ function decoder(): Decoder {
       contents: `
         export { ReadWriteByteBuffer } from '@dcl/ecs/dist/serialization/ByteBuffer'
         export { readMessage } from '@dcl/ecs/dist/serialization/crdt/message'
+        export { PutComponentOperation } from '@dcl/ecs/dist/serialization/crdt/putComponent'
+        export { PBUiCanvasInformation } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/ui_canvas_information.gen'
+        export { PBUiTransform } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/ui_transform.gen'
         export { PBMeshRenderer } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/mesh_renderer.gen'
         export { PBAudioSource } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/audio_source.gen'
         export { PBUiText } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/ui_text.gen'
@@ -245,6 +287,15 @@ function decoder(): Decoder {
   })
   cached = createRequire(import.meta.url)(outfile) as Decoder
   return cached
+}
+
+/** UiCanvasInformation on the root entity, framed exactly as the renderer frames it. */
+function canvasMessage(canvas: Canvas): Uint8Array {
+  const d = decoder()
+  const body = d.PBUiCanvasInformation.encode({ devicePixelRatio: 2, ...canvas }).finish()
+  const buf = new d.ReadWriteByteBuffer()
+  d.PutComponentOperation.write(ROOT_ENTITY, 1, UI_CANVAS_INFORMATION, body, buf)
+  return buf.toBinary()
 }
 
 /** The last value of each (entity, component) the scene put, grouped by component. */
@@ -357,5 +408,53 @@ test(
     assert.ok(ghost)
     assert.equal(ghost.id, 'spike-ghost')
     assert.ok(ghost.expressionTriggerId, 'the ghost must be told to perform')
+  }
+)
+
+test(
+  'the pad grid follows the canvas the renderer reports: a band in portrait, a column on its side',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    // The renderer reserves the left edge for its own chat, profile and emote
+    // buttons on mobile, and reports it in interactableArea. A layout that only
+    // honoured the device inset drew the pads underneath those buttons.
+    const portrait = await run(
+      { realmName: 'rainbowroad.dcl.eth' },
+      { width: 390, height: 844, screenInsetArea: { top: 47, right: 0, bottom: 34, left: 0 } }
+    )
+    const landscape = await run(
+      { realmName: 'rainbowroad.dcl.eth' },
+      {
+        width: 844,
+        height: 390,
+        screenInsetArea: { top: 0, right: 47, bottom: 0, left: 47 },
+        interactableArea: { top: 0, right: 0, bottom: 30, left: 120 }
+      }
+    )
+    const d = decoder()
+    const padWidths = (host: Host) => {
+      const put = inventory(host.frames, d)
+      const labels = put.get(UI_TEXT) ?? new Map<number, Uint8Array>()
+      // A pad is the parent of one of the eight labels, and every UiTransform
+      // names its parent on the wire - so the label leads to the pad, with no
+      // guessing about how react-ecs numbers entities.
+      const padLabelEntities = [...labels]
+        .filter(([, b]) => EMOTES.some((e) => e.label === d.PBUiText.decode(b).value))
+        .map(([e]) => e)
+      const transforms = put.get(UI_TRANSFORM) ?? new Map<number, Uint8Array>()
+      const widths = new Set<number>()
+      for (const e of padLabelEntities) {
+        const own = transforms.get(e)
+        const parentId = own ? d.PBUiTransform.decode(own).parent : undefined
+        const pad = parentId === undefined ? undefined : transforms.get(parentId)
+        if (pad) widths.add(d.PBUiTransform.decode(pad).width ?? -1)
+      }
+      return widths
+    }
+    const p = padWidths(portrait)
+    const l = padWidths(landscape)
+    assert.equal(p.size, 1, `portrait pads should share one width, got ${[...p].join(',')}`)
+    assert.equal(l.size, 1, `landscape pads should share one width, got ${[...l].join(',')}`)
+    assert.notDeepEqual([...p], [...l], 'the grid did not change shape with the canvas')
   }
 )

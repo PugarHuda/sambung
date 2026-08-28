@@ -1,7 +1,9 @@
-import ReactEcs, { ReactEcsRenderer, UiEntity, Label, ScreenInsetArea } from '@dcl/sdk/react-ecs'
+import ReactEcs, { ReactEcsRenderer, UiEntity, Label } from '@dcl/sdk/react-ecs'
+import { engine, UiCanvasInformation } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { EMOTES, State } from './game.ts'
 import { readableInk } from './contrast.ts'
+import { Frame, frameFor, layoutFor } from './layout.ts'
 
 export type UiContext = {
   state: State
@@ -76,108 +78,128 @@ function status(s: State, demo: boolean, ended: number): string {
   }
 }
 
+/**
+ * The area the scene may draw in, as the renderer reports it this frame.
+ *
+ * UiCanvasInformation carries two rectangles. screenInsetArea is the device's
+ * own margin - notch, status bar, home indicator. interactableArea is the part
+ * the client's HUD leaves free: on mobile the client draws chat, profile and
+ * emotes down the left edge and action buttons bottom-right, over any scene UI
+ * underneath. ScreenInsetArea honours only the first, so the pad grid used to
+ * run under the client's own buttons. The frame here is the intersection.
+ */
+function currentFrame(): Frame {
+  const info = UiCanvasInformation.getOrNull(engine.RootEntity)
+  return frameFor(info?.width, info?.height, info?.screenInsetArea, info?.interactableArea)
+}
+
 export function setupUi(ctx: UiContext) {
-  // Everything lives inside the renderer-reported safe area: the header sits near
-  // the top edge and the pads own the bottom band, which on a phone is exactly
-  // where the notch, status bar and home indicator are. ScreenInsetArea owns its
-  // own positioning, so the child just fills it.
   ReactEcsRenderer.setUiRenderer(() => {
     // Resolved once per frame rather than once per pad: the answer is the same
     // for all eight, and this callback is the hot path.
     const on = ctx.highlight()
     const demo = ctx.demo()
     const target = ctx.target()
+    const frame = currentFrame()
+    const L = layoutFor(frame)
     // An invite is only offered when a tap is not a move. During playback and
-    // repeat the pad sits a thumb-slip above the top row, and a slip onto it
-    // used to be a silent non-move mid-chain.
+    // repeat the pad sits a thumb-slip from the grid, and a slip onto it used
+    // to be a silent non-move mid-chain.
     const inviting = !demo && ctx.state.phase === 'choosing'
 
     return (
-      <ScreenInsetArea>
-        <UiEntity uiTransform={{ width: '100%', height: '100%' }}>
+      <UiEntity
+        uiTransform={{
+          positionType: 'absolute',
+          position: { top: frame.top, left: frame.left },
+          width: frame.width,
+          height: frame.height
+        }}
+      >
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: L.header.position,
+            width: L.header.width,
+            flexDirection: 'column',
+            alignItems: L.header.align
+          }}
+        >
+          {/* The name is nowhere else on screen: the client chrome shows the
+              World's name, which belongs to the organiser. */}
+          <Label value="SAMBUNG" fontSize={14} color={FAINT} textAlign={L.header.textAlign} />
+          <Label
+            value={`${target.label} ${target.n} · LIVES ${ctx.state.lives}`}
+            fontSize={18}
+            color={FAINT}
+            textAlign={L.header.textAlign}
+          />
+          <Label
+            value={status(ctx.state, demo, ctx.ended())}
+            fontSize={32}
+            color={WHITE}
+            textAlign={L.header.textAlign}
+          />
+          <Label value={ctx.ticker()} fontSize={20} color={VOICE} textAlign={L.header.textAlign} />
+        </UiEntity>
+
+        {/* The one thing this game could not do: hand somebody the World. */}
+        {inviting && (
           <UiEntity
             uiTransform={{
               positionType: 'absolute',
-              // 4% of the inset area, and 92% wide so a long ticker line wraps
-              // with a margin instead of running into the screen edges.
-              position: { top: '4%', left: '4%' },
-              width: '92%',
-              flexDirection: 'column',
+              position: L.invite.position,
+              width: L.invite.width,
+              height: L.invite.height,
+              justifyContent: 'center',
               alignItems: 'center'
             }}
+            uiBackground={{ color: INVITE }}
+            onMouseDown={ctx.onInvite}
           >
-            {/* The name is nowhere else on screen: the client chrome shows the
-                World's name, which belongs to the organiser. */}
-            <Label value="SAMBUNG" fontSize={14} color={FAINT} />
-            <Label
-              value={`${target.label} ${target.n} · LIVES ${ctx.state.lives}`}
-              fontSize={18}
-              color={FAINT}
-            />
-            <Label value={status(ctx.state, demo, ctx.ended())} fontSize={32} color={WHITE} />
-            <Label value={ctx.ticker()} fontSize={20} color={VOICE} textAlign="top-center" />
+            <Label value="INVITE" fontSize={18} color={WHITE} textAlign="middle-center" />
           </UiEntity>
+        )}
 
-          {/* The one thing this game could not do: hand somebody the World.
-              Parked in the dead band between the ticker and the pads, on the
-              right, where a thumb already rests and no pad ever sits. */}
-          {inviting && (
+        {/* The thumb zone. Portrait: a 4x2 band along the bottom. Landscape: a
+            2x4 column on the right, where one thumb actually is. Sized in % of
+            the drawable frame so it survives every phone. */}
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: L.grid.position,
+            width: L.grid.width,
+            height: L.grid.height,
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            justifyContent: 'space-between',
+            alignContent: 'space-between'
+          }}
+        >
+          {PADS.map((pad, i) => (
             <UiEntity
+              key={pad.id}
               uiTransform={{
-                positionType: 'absolute',
-                position: { bottom: '41%', right: '2%' },
-                width: '26%',
-                height: '7%',
+                width: L.pad.width,
+                height: L.pad.height,
                 justifyContent: 'center',
                 alignItems: 'center'
               }}
-              uiBackground={{ color: INVITE }}
-              onMouseDown={ctx.onInvite}
+              uiBackground={{ color: on === i ? pad.lit : pad.unlit }}
+              onMouseDown={() => ctx.onTap(i)}
             >
-              <Label value="INVITE" fontSize={18} color={WHITE} textAlign="middle-center" />
+              {/* ponytail: words + colour instead of icon textures. Colour is the
+                  real signal; swap in icons only if playtests say words are slow to read. */}
+              <Label
+                value={pad.label}
+                fontSize={20}
+                color={on === i ? pad.litInk : pad.unlitInk}
+                textAlign="middle-center"
+              />
             </UiEntity>
-          )}
-
-          {/* Thumb zone: 4x2 pads pinned to the bottom, sized in % so it survives
-              every phone aspect ratio. Gutters are a third of a pad's margin for
-              error: at 24% x 46% they were about five pixels on a portrait phone. */}
-          <UiEntity
-            uiTransform={{
-              positionType: 'absolute',
-              position: { bottom: '3%', left: '2%' },
-              width: '96%',
-              height: '34%',
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'space-between',
-              alignContent: 'space-between'
-            }}
-          >
-            {PADS.map((pad, i) => (
-              <UiEntity
-                key={pad.id}
-                uiTransform={{
-                  width: '23%',
-                  height: '44%',
-                  justifyContent: 'center',
-                  alignItems: 'center'
-                }}
-                uiBackground={{ color: on === i ? pad.lit : pad.unlit }}
-                onMouseDown={() => ctx.onTap(i)}
-              >
-                {/* ponytail: words + colour instead of icon textures. Colour is the
-                    real signal; swap in icons only if playtests say words are slow to read. */}
-                <Label
-                  value={pad.label}
-                  fontSize={20}
-                  color={on === i ? pad.litInk : pad.unlitInk}
-                  textAlign="middle-center"
-                />
-              </UiEntity>
-            ))}
-          </UiEntity>
+          ))}
         </UiEntity>
-      </ScreenInsetArea>
+      </UiEntity>
     )
   })
 }
