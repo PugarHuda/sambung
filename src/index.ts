@@ -14,7 +14,7 @@ import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { triggerEmote, copyToClipboard } from '~system/RestrictedActions'
-import { getRealm } from '~system/Runtime'
+import { getRealm, getExplorerInformation } from '~system/Runtime'
 import { getPlayersInScene } from '~system/Players'
 import {
   EMOTES,
@@ -57,6 +57,10 @@ const FLASH = 0.25 // seconds a pad stays lit after you press it
 // Typed as string, not as its literal: an empty value is a supported mode
 // (local-only play), and the guards below must stay reachable code.
 const RECORD_API: string = 'https://sambung-dcl.vercel.app/api/chain'
+/** The scene's console, but reachable: see server/api/note.ts. Same host. */
+const NOTE_API: string = RECORD_API.replace(/\/api\/chain$/, '/api/note')
+/** "desktop", "mobile", "vr" or "web", as the client reports itself. */
+let platform = 'unknown'
 
 /**
  * Where records live when the realm cannot say. The realm is asked first (see
@@ -140,7 +144,29 @@ function snapshotNow(): Snapshot {
  * player data is written out beyond the name already shown in-world.
  */
 function note(what: string, err: unknown) {
-  console.error(`[sambung] ${what}:`, err instanceof Error ? err.message : String(err))
+  const detail = err instanceof Error ? err.message : String(err)
+  console.error(`[sambung] ${what}:`, detail)
+  beacon('error', `${what}: ${detail}`)
+}
+
+/**
+ * One line to the endpoint about something that happened on this device.
+ *
+ * Nothing that identifies the player travels: the kind of event, the client
+ * platform, and for errors a short detail. It is the only way to learn what a
+ * judge's phone did - every failure here is swallowed for the player's sake,
+ * and a console on a phone is a console nobody reads. Fire and forget; a
+ * beacon that fails must not become another beacon.
+ */
+function beacon(kind: string, detail?: string) {
+  if (!NOTE_API) return
+  const body = JSON.stringify(detail ? { kind, platform, detail } : { kind, platform })
+  fetch(`${NOTE_API}?world=${encodeURIComponent(world)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    timeout: REQUEST_TIMEOUT_MS
+  }).catch(() => undefined)
 }
 
 /** The scene runtime provides setTimeout, so backoff is a real wait, not a spin. */
@@ -438,6 +464,7 @@ function onTap(i: number) {
   const result = tap(state, i)
   if (result === 'ignored') return
 
+  if (!played) beacon('first_tap')
   played = true
   // No flash on a miss: highlight() shows the expected pad instead.
   if (result !== 'missed') {
@@ -469,6 +496,7 @@ function onTap(i: number) {
       ticker = `${me()} set the record at ${mine.record}.`
       known = betterOf(known, mine)
       bus.emit('record', mine)
+      beacon('record', `${mine.record}`)
     } else if (beatsWeek) {
       // The week is the target on the ticker, so taking it has to be said.
       ticker = `${me()} took this week's best at ${mine.record}.`
@@ -522,6 +550,16 @@ async function resolveWorld() {
   } catch (err) {
     note('could not read the realm, using the default world key', err)
   }
+  // The platform is the one fact worth knowing about every arrival: whether
+  // the phone client is what people actually come in on. Asked after the
+  // world is known, so the arrival lands in the right list.
+  try {
+    const info = await getExplorerInformation({})
+    platform = info.platform || 'unknown'
+  } catch (err) {
+    note('could not read the explorer information', err)
+  }
+  beacon('arrive')
 }
 
 /**
@@ -536,6 +574,7 @@ function onInvite() {
   void copyToClipboard({ text: jumpUrl(realmName) })
     .then(() => {
       ticker = 'Link copied. Paste it to a friend — a chain needs somebody to dare.'
+      beacon('invite')
     })
     .catch((err: unknown) => {
       // No clipboard on this client: the name is still something you can say out

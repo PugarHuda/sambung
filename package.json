@@ -16,7 +16,8 @@
     "budget": "node scripts/scene-budget.mjs",
     "sound": "node scripts/make-sound.mjs",
     "verify": "playwright test --project=deployed",
-    "serve": "node scripts/serve-endpoint.mjs"
+    "serve": "node scripts/serve-endpoint.mjs",
+    "notes": "node scripts/notes.mjs"
   },
   "devDependencies": {
     "@dcl/js-runtime": "7.26.0",

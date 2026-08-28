@@ -92,6 +92,7 @@ function boot(realm: Realm, canvas?: Canvas): { scene: Scene; host: Host } {
         Promise.resolve({ urn: 'test', content: [], metadataJson: '{}', baseUrl: '' }),
       getExplorerInformation: () =>
         Promise.resolve({ agent: 'test', platform: 'mobile', configurations: {} }),
+      // Not called by the scene; present because a real host has it.
       getWorldTime: () => Promise.resolve({ seconds: 0 })
     },
     '~system/Players': {

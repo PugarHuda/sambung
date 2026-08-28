@@ -21,13 +21,16 @@
 // serves, answering as an empty world - which is itself worth being able to try.
 
 import { createServer } from 'node:http'
-import handler from '../server/api/chain.ts'
+import chain from '../server/api/chain.ts'
+import note from '../server/api/note.ts'
 
 const port = Number(process.env.PORT ?? 8787)
 
 const server = createServer((req, res) => {
   // Anything that escapes the handler would otherwise hang the socket until the
   // client gives up, which reads as a network fault rather than a bug.
+  // The same two routes Vercel serves from server/api.
+  const handler = (req.url ?? '').startsWith('/api/note') ? note : chain
   Promise.resolve(handler(req, res)).catch((err) => {
     console.error('handler threw:', err)
     if (!res.headersSent) res.statusCode = 500
