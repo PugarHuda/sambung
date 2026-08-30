@@ -393,22 +393,19 @@ test(
 )
 
 test(
-  'the ghost spike is still on stage, so the AvatarShape question can be answered',
+  'no AvatarShape reaches the renderer, because the ghost idea was not taken',
   { skip: !existsSync(BUNDLE) },
   async () => {
-    // Deliberately a test that will be deleted with src/spike-avatar.ts: while
-    // the spike ships, a deploy that silently dropped it would waste the one
-    // field test the ghost decision depends on.
+    // The spike passed its 2026-08-28 cutoff without an answer, so the agreed
+    // fallback ships. What this guards is the debug artefact: an avatar named
+    // GHOST parked in front of the spawn point, which would be the first thing
+    // a judge sees. The decoder stays so the absence is proven, not assumed.
     const host = await run({ realmName: 'rainbowroad.dcl.eth' })
     const d = decoder()
     const ghosts = decoded(inventory(host.frames, d), AVATAR_SHAPE, (b) =>
       d.PBAvatarShape.decode(b)
     )
-    assert.equal(ghosts.length, 1)
-    const ghost = ghosts[0]
-    assert.ok(ghost)
-    assert.equal(ghost.id, 'spike-ghost')
-    assert.ok(ghost.expressionTriggerId, 'the ghost must be told to perform')
+    assert.deepEqual(ghosts, [])
   }
 )
 
