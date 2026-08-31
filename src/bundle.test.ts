@@ -400,34 +400,15 @@ test(
   }
 )
 
-test(
-  'the ghost spike is still on stage, so the AvatarShape question can be answered',
-  { skip: !existsSync(BUNDLE) },
-  async () => {
-    // Deliberately a test that will be deleted with src/spike-avatar.ts: while
-    // the spike ships, a deploy that silently dropped it would waste the one
-    // field test the ghost decision depends on.
-    const host = await run({ realmName: 'rainbowroad.dcl.eth' })
-    const d = decoder()
-    const ghosts = decoded(inventory(host.frames, d), AVATAR_SHAPE, (b) =>
-      d.PBAvatarShape.decode(b)
-    )
-    // Four variants, and the photograph can only tell them apart if they really
-    // differ on the wire - four identical mannequins would prove nothing and
-    // would cost another wallet signature to find out.
-    assert.equal(ghosts.length, 4)
-    for (const g of ghosts) {
-      assert.ok(g.expressionTriggerId, `${g.id} must be told to perform`)
-      assert.ok(g.wearables.length > 0, `${g.id} must be dressed`)
-    }
-    const clock = ghosts.filter((g) => (g.expressionTriggerTimestamp ?? 0) > 1e12)
-    assert.equal(clock.length, 3, 'only the control sends a counter as the timestamp')
-    const urn = ghosts.filter((g) => g.expressionTriggerId?.startsWith('urn:'))
-    assert.equal(urn.length, 2, 'two variants name the emote as a URN')
-    const listed = ghosts.filter((g) => g.emotes.length > 0)
-    assert.equal(listed.length, 1, 'one variant also declares the emote in `emotes`')
-  }
-)
+test('an empty world puts nobody on the stage', { skip: !existsSync(BUNDLE) }, async () => {
+  // The ghosts are the record's builders, so with no record there are none:
+  // a first visitor must arrive to a clean stage, not to a row of strangers.
+  // The stub host answers no network, which is exactly that case.
+  const host = await run({ realmName: 'rainbowroad.dcl.eth' })
+  const d = decoder()
+  const ghosts = decoded(inventory(host.frames, d), AVATAR_SHAPE, (b) => d.PBAvatarShape.decode(b))
+  assert.equal(ghosts.length, 0, 'no record means no builders to show')
+})
 
 test(
   'the pad grid follows the canvas the renderer reports: a band in portrait, a column on its side',

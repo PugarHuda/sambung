@@ -9,6 +9,8 @@ import {
   TouchScreenControls,
   InputAction,
   UiCanvasInformation,
+  AvatarShape,
+  TextShape,
   pointerEventsSystem
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
@@ -32,6 +34,7 @@ import {
 } from './game.ts'
 import {
   Snapshot,
+  Link,
   EMPTY,
   parseSnapshot,
   parseAuthors,
@@ -43,10 +46,10 @@ import {
   jumpUrl,
   myMark
 } from './record.ts'
+import { ghostPlan, EMOTE_URN, WEARABLES } from './ghosts.ts'
 import { CLIP, PAD_PITCH, MISS_PITCH } from './audio.ts'
 import { REQUEST_TIMEOUT_MS, withRetry } from './net.ts'
 import { setupUi } from './ui.tsx'
-import { spikeAvatar } from './spike-avatar.ts' // SPIKE: remove with the file
 
 const CENTER = Vector3.create(8, 0, 8)
 const RING_RADIUS = 5.5
@@ -314,6 +317,11 @@ function startDemo() {
   if (known.record === 0) return
   demoIdx = 0
   demoTimer = 0
+  // The people who built it, standing on the stage. A solo visitor watches the
+  // record performed by its actual builders rather than reading their names.
+  showGhosts(known.chain)
+  const first = known.chain[0]
+  if (first) ghostPerform(first.user, first.emote)
 }
 
 /** Advance the record playback. Returns true while it still owns the pillars. */
@@ -337,9 +345,14 @@ function tickDemo(dt: number): boolean {
         ? `Link ${mine} of that record is yours. It is still standing.`
         : `${rest}That was the record. ${weeklyTarget()}`
     stopDemo()
+    // The record is theirs, so the applause is theirs. It also leaves the stage
+    // holding a group of people rather than a row of mannequins.
+    ghostsCheer()
     return false
   }
   demoIdx = next
+  const link = known.chain[next]
+  if (link) ghostPerform(link.user, link.emote)
   return true
 }
 
@@ -357,6 +370,77 @@ function highlight(): number {
   const shown = litIndex(state)
   if (shown >= 0) return shown
   return flashTimer > 0 ? flashIdx : -1
+}
+
+// The builders of the record, standing on the stage and performing their own
+// links. Where each one stands is ghostPlan's arithmetic; this is only the
+// entities, which is why it lives here with buildStage rather than in a module
+// node --test cannot load.
+//
+// Two facts the 2026-08-31 spike paid for:
+//   1. AvatarShape DOES render inside a normal scene. The proto comment saying
+//      it "is only actually used in the global Avatar Scene" is wrong.
+//   2. expressionTriggerId must be a FULL URN. The bare id that triggerEmote()
+//      takes renders a frozen avatar in the rest pose, and says nothing.
+const ghosts = new Map<string, Entity>()
+
+/**
+ * Put the builders on the stage, replacing whoever was there.
+ *
+ * The id is namespaced rather than the raw userId: a returning player whose link
+ * is in the record is standing in the scene under that exact id, and handing the
+ * client two avatars with one id invites it to merge or fight over them.
+ */
+function showGhosts(chain: Link[]) {
+  clearGhosts()
+  for (const slot of ghostPlan(chain)) {
+    const ghost = engine.addEntity()
+    Transform.create(ghost, { position: Vector3.create(slot.x, 0.3, slot.z) })
+    AvatarShape.create(ghost, {
+      id: `ghost:${slot.user}`,
+      name: slot.name,
+      // Explicit, because the client drew a naked body when this was empty and
+      // the proto's documented per-slot defaults never arrived.
+      wearables: WEARABLES,
+      emotes: [],
+      expressionTriggerId: '',
+      expressionTriggerTimestamp: 0
+    })
+    // The client draws no floating nametag for a scene AvatarShape - only for
+    // real players - so the name that makes this a person rather than a prop
+    // has to be drawn by the scene.
+    const label = engine.addEntity()
+    Transform.create(label, { position: Vector3.create(0, 2.4, 0), parent: ghost })
+    TextShape.create(label, { text: slot.name, fontSize: 2 })
+    ghosts.set(slot.user, ghost)
+  }
+}
+
+/**
+ * One builder performs one link. The timestamp has to change for the client to
+ * treat it as a fresh trigger, so the same emote twice in a row still plays.
+ */
+function ghostPerform(user: string, emote: number) {
+  const ghost = ghosts.get(user)
+  const id = EMOTES[emote]?.id
+  if (!ghost || !id) return
+  const shape = AvatarShape.getMutable(ghost)
+  shape.expressionTriggerId = EMOTE_URN + id
+  shape.expressionTriggerTimestamp = Date.now()
+}
+
+/** Everyone at once, when the record has finished replaying. */
+function ghostsCheer() {
+  for (const ghost of ghosts.values()) {
+    const shape = AvatarShape.getMutable(ghost)
+    shape.expressionTriggerId = EMOTE_URN + CHEER_EMOTE
+    shape.expressionTriggerTimestamp = Date.now()
+  }
+}
+
+function clearGhosts() {
+  for (const ghost of ghosts.values()) engine.removeEntityWithChildren(ghost)
+  ghosts.clear()
 }
 
 /** Carries the miss sound. The stage itself is where a broken chain belongs. */
@@ -660,7 +744,6 @@ function watchArrivals() {
 }
 
 export function main() {
-  spikeAvatar() // SPIKE: remove with the file
   clearMobileHud()
   buildStage()
   setupUi({
