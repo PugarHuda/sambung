@@ -45,6 +45,7 @@ import {
 import { CLIP, PAD_PITCH, MISS_PITCH } from './audio.ts'
 import { REQUEST_TIMEOUT_MS, withRetry } from './net.ts'
 import { setupUi } from './ui.tsx'
+import { spikeAvatar } from './spike-avatar.ts' // SPIKE: remove with the file
 
 const CENTER = Vector3.create(8, 0, 8)
 const RING_RADIUS = 5.5
@@ -630,6 +631,7 @@ function watchArrivals() {
 }
 
 export function main() {
+  spikeAvatar() // SPIKE: remove with the file
   clearMobileHud()
   buildStage()
   setupUi({
