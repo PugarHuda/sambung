@@ -244,7 +244,15 @@ type Decoder = {
   PBMeshRenderer: { decode: (d: Uint8Array) => { mesh?: { $case: string } } }
   PBAudioSource: { decode: (d: Uint8Array) => { audioClipUrl: string; pitch?: number } }
   PBUiText: { decode: (d: Uint8Array) => { value: string } }
-  PBAvatarShape: { decode: (d: Uint8Array) => { id: string; expressionTriggerId?: string } }
+  PBAvatarShape: {
+    decode: (d: Uint8Array) => {
+      id: string
+      expressionTriggerId?: string
+      expressionTriggerTimestamp?: number
+      wearables: string[]
+      emotes: string[]
+    }
+  }
 }
 
 /** Component ids from @dcl/ecs component-names.gen: the wire protocol's vocabulary. */
@@ -404,11 +412,20 @@ test(
     const ghosts = decoded(inventory(host.frames, d), AVATAR_SHAPE, (b) =>
       d.PBAvatarShape.decode(b)
     )
-    assert.equal(ghosts.length, 1)
-    const ghost = ghosts[0]
-    assert.ok(ghost)
-    assert.equal(ghost.id, 'spike-ghost')
-    assert.ok(ghost.expressionTriggerId, 'the ghost must be told to perform')
+    // Four variants, and the photograph can only tell them apart if they really
+    // differ on the wire - four identical mannequins would prove nothing and
+    // would cost another wallet signature to find out.
+    assert.equal(ghosts.length, 4)
+    for (const g of ghosts) {
+      assert.ok(g.expressionTriggerId, `${g.id} must be told to perform`)
+      assert.ok(g.wearables.length > 0, `${g.id} must be dressed`)
+    }
+    const clock = ghosts.filter((g) => (g.expressionTriggerTimestamp ?? 0) > 1e12)
+    assert.equal(clock.length, 3, 'only the control sends a counter as the timestamp')
+    const urn = ghosts.filter((g) => g.expressionTriggerId?.startsWith('urn:'))
+    assert.equal(urn.length, 2, 'two variants name the emote as a URN')
+    const listed = ghosts.filter((g) => g.emotes.length > 0)
+    assert.equal(listed.length, 1, 'one variant also declares the emote in `emotes`')
   }
 )
 
