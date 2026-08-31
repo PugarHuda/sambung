@@ -8,6 +8,7 @@ import {
   AudioSource,
   TouchScreenControls,
   InputAction,
+  UiCanvasInformation,
   pointerEventsSystem
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
@@ -560,6 +561,34 @@ async function resolveWorld() {
     note('could not read the explorer information', err)
   }
   beacon('arrive')
+  reportCanvas()
+}
+
+/**
+ * Send the raw canvas numbers home, once.
+ *
+ * The web client draws this scene's UI into a strip about twenty pixels wide on a
+ * 390x844 canvas, while the same build lays out correctly at 1280x800. `frameFor`
+ * cannot produce that on its own - it floors the frame at a quarter of each axis -
+ * so the renderer is reporting something the layout does not expect, and no
+ * screenshot can say what. This prints the numbers to the beacon list instead of
+ * guessing at them.
+ *
+ * ponytail: diagnostic, delete once the portrait layout is understood. It rides on
+ * the beacon that already exists rather than adding a channel.
+ */
+function reportCanvas() {
+  const i = UiCanvasInformation.getOrNull(engine.RootEntity)
+  if (!i) {
+    beacon('error', 'canvas: none reported')
+    return
+  }
+  const box = (r?: { top: number; right: number; bottom: number; left: number }) =>
+    r ? `${r.top},${r.right},${r.bottom},${r.left}` : 'none'
+  beacon(
+    'error',
+    `canvas ${i.width}x${i.height} ratio:${i.devicePixelRatio} screen:${box(i.screenInsetArea)} inter:${box(i.interactableArea)}`
+  )
 }
 
 /**
