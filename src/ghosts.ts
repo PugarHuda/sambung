@@ -66,6 +66,9 @@ export const MAX_GHOSTS = 6
 const ARC_FROM = Math.PI * 0.55
 const ARC_TO = Math.PI * 0.95
 
+/** How far apart people stand, in metres, until the wedge runs out of room. */
+const SPACING = 1.6
+
 export type GhostSlot = { user: string; name: string; x: number; z: number; yaw: number }
 
 /**
@@ -88,11 +91,15 @@ export function ghostPlan(
     if (seen.size >= max) break
   }
   const people = [...seen].map(([user, name]) => ({ user, name }))
+  // People stand a fixed distance apart and the group is centred, rather than
+  // stretching to fill the wedge however few of them there are. Stretching sent
+  // a pair - the commonest record by far - to the two far ends of the arc with
+  // nothing between them, which is how one of them ended up out at the edge of
+  // the frame. Only a full stage falls back to spreading out.
+  const mid = (ARC_FROM + ARC_TO) / 2
+  const step = Math.min(SPACING / radius, (ARC_TO - ARC_FROM) / Math.max(people.length - 1, 1))
   return people.map((p, i) => {
-    // One builder stands in the middle of the wedge rather than at the end of
-    // an arc of one.
-    const t = people.length > 1 ? i / (people.length - 1) : 0.5
-    const angle = ARC_FROM + (ARC_TO - ARC_FROM) * t
+    const angle = mid + (i - (people.length - 1) / 2) * step
     return {
       ...p,
       x: center.x + Math.cos(angle) * radius,

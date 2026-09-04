@@ -58,6 +58,32 @@ test('nobody stands where the pad grid is drawn over them', () => {
   }
 })
 
+test('a pair of builders stands together, not at opposite ends of the stage', () => {
+  // Two is the commonest record, and stretching a group to fill the wedge put
+  // those two as far apart as the stage allows - one of them out at the edge of
+  // the frame. They stand a fixed distance apart now.
+  const pair = ghostPlan([link(0, '0xa', 'Ana'), link(1, '0xb', 'Bo')])
+  const [a, b] = pair
+  assert.ok(a && b)
+  const apart = Math.hypot(a.x - b.x, a.z - b.z)
+  assert.ok(apart > 1.2 && apart < 2.2, `a pair stood ${apart.toFixed(2)}m apart`)
+})
+
+test('a full stage still fits inside the wedge', () => {
+  // Fixed spacing has to give way once there are enough people, or the group
+  // widens out of the clear side of the stage and back under the pad grid.
+  const chain = Array.from({ length: MAX_GHOSTS }, (_, i) => link(0, `0x${i}`, `P${i}`))
+  const plan = ghostPlan(chain)
+  for (let i = 1; i < plan.length; i++) {
+    const prev = plan[i - 1]
+    const cur = plan[i]
+    assert.ok(prev && cur)
+    const apart = Math.hypot(prev.x - cur.x, prev.z - cur.z)
+    // Close enough to read as a crowd, far enough not to stand inside a body.
+    assert.ok(apart > 0.6, `${prev.name} and ${cur.name} overlap at ${apart.toFixed(2)}m`)
+  }
+})
+
 test('a builder faces the middle of the stage, which is where the visitor is', () => {
   const chain = Array.from({ length: MAX_GHOSTS }, (_, i) => link(0, `0x${i}`, `P${i}`))
   for (const g of ghostPlan(chain)) {
