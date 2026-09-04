@@ -786,9 +786,44 @@ function watchArrivals() {
   })
 }
 
+/**
+ * Four questions about a floating name, asked at once.
+ *
+ * A deploy that changed fontSize 5 -> 2 AND added textColor AND outlineColor AND
+ * outlineWidth in one go turned the ghost labels from "far too big" to "not
+ * drawn at all", and four changes in one deploy cannot say which one did it.
+ * Every answer costs a wallet signature, so this asks all four together the way
+ * the 2026-08-31 avatar spike did.
+ *
+ * A: the known-good control - the size that definitely rendered, no colour props
+ * B: size alone, no colour props
+ * C: the control plus textColor
+ * D: the control plus the outline
+ *
+ * Photograph once at 1920x1200 and read which of the four is legible.
+ *
+ * ponytail: temporary. Delete with the answer, and put the winning combination
+ * on LABEL_SIZE and the TextShape in showGhosts.
+ */
+function labelSpike() {
+  const variants: [string, Partial<ReturnType<typeof TextShape.create>>][] = [
+    ['A size5', { fontSize: 5 }],
+    ['B size2', { fontSize: 2 }],
+    ['C ink', { fontSize: 5, textColor: Color4.White() }],
+    ['D outline', { fontSize: 5, outlineColor: Color3.fromHexString('#14121F'), outlineWidth: 0.2 }]
+  ]
+  variants.forEach(([name, props], i) => {
+    const e = engine.addEntity()
+    Transform.create(e, { position: Vector3.create(5 + i * 2, 3.4, 12.5) })
+    TextShape.create(e, { text: name, ...props })
+    Billboard.create(e, { billboardMode: BillboardMode.BM_Y })
+  })
+}
+
 export function main() {
   clearMobileHud()
   buildStage()
+  labelSpike()
   setupUi({
     state,
     highlight,
