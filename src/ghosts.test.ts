@@ -24,26 +24,50 @@ test('a crowded record fills the stage but does not overflow it', () => {
   assert.equal(ghostPlan(chain).length, MAX_GHOSTS)
 })
 
-test('a single builder stands centre stage, not at the end of an arc of one', () => {
+test('a single builder stands in the middle of the wedge, not at the end of an arc of one', () => {
   const solo = ghostPlan([link(0, '0xa', 'Ana')])
   assert.equal(solo.length, 1)
   const only = solo[0]
   assert.ok(only)
-  // Centre of the arc is straight ahead of the spawn point: x at the middle,
-  // z at its furthest.
-  assert.ok(Math.abs(only.x - 8) < 0.01, `expected centre stage, got x=${only.x}`)
-  assert.ok(only.z > 11, `expected the far arc, got z=${only.z}`)
+  assert.ok(only.x < 8, `expected the visitor's left, got x=${only.x}`)
+  assert.ok(only.z > 8, `expected the far half, got z=${only.z}`)
 })
 
-test('every builder stands on the stage, past the spawn region and inside the pillars', () => {
+test('every builder stands clear of the visitor and inside the pillars', () => {
   const chain = Array.from({ length: MAX_GHOSTS }, (_, i) => link(0, `0x${i}`, `P${i}`))
   for (const g of ghostPlan(chain)) {
-    // The player spawns in 6.5..9.5 and looks towards +z, so a ghost must stand
-    // beyond that or it lands on top of the visitor.
-    assert.ok(g.z > 9.5, `${g.name} stands in the spawn region at z=${g.z}`)
+    // The visitor spawns anywhere in 6.5..9.5 on both axes. A ghost inside that
+    // box lands on top of whoever just arrived.
+    const inSpawn = g.x >= 6.5 && g.x <= 9.5 && g.z >= 6.5 && g.z <= 9.5
+    assert.ok(!inSpawn, `${g.name} stands in the spawn region at ${g.x},${g.z}`)
     // The pillars ring the stage at 5.5; a ghost outside that is off the stage.
     const fromCentre = Math.hypot(g.x - 8, g.z - 8)
     assert.ok(fromCentre < 5.5, `${g.name} stands outside the pillars at ${fromCentre}`)
+  }
+})
+
+test('nobody stands where the pad grid is drawn over them', () => {
+  // Photographed 2026-09-04: the pad grid is screen-space and owns the right of
+  // the view in landscape, and +x is screen right. A builder at x > 8 was 90%
+  // hidden behind it. This is the regression that cost a deploy to see.
+  for (let n = 1; n <= MAX_GHOSTS; n++) {
+    const chain = Array.from({ length: n }, (_, i) => link(0, `0x${i}`, `P${i}`))
+    for (const g of ghostPlan(chain)) {
+      assert.ok(g.x < 8, `${g.name} stands under the pad grid at x=${g.x} (${n} builders)`)
+    }
+  }
+})
+
+test('a builder faces the middle of the stage, which is where the visitor is', () => {
+  const chain = Array.from({ length: MAX_GHOSTS }, (_, i) => link(0, `0x${i}`, `P${i}`))
+  for (const g of ghostPlan(chain)) {
+    // A yaw of theta points an entity along (sin theta, cos theta) in this
+    // left-handed space. Walking one metre that way must get closer to (8,8) -
+    // an avatar with no rotation at all faced +z and away, which is the bug.
+    const t = (g.yaw * Math.PI) / 180
+    const before = Math.hypot(g.x - 8, g.z - 8)
+    const after = Math.hypot(g.x + Math.sin(t) - 8, g.z + Math.cos(t) - 8)
+    assert.ok(after < before, `${g.name} faces away from the stage: yaw ${g.yaw}`)
   }
 })
 

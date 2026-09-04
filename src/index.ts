@@ -11,9 +11,11 @@ import {
   UiCanvasInformation,
   AvatarShape,
   TextShape,
+  Billboard,
+  BillboardMode,
   pointerEventsSystem
 } from '@dcl/sdk/ecs'
-import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
+import { Color3, Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { MessageBus } from '@dcl/sdk/message-bus'
 import { getPlayer, onEnterScene, onLeaveScene } from '@dcl/sdk/players'
 import { triggerEmote, copyToClipboard } from '~system/RestrictedActions'
@@ -382,7 +384,17 @@ function highlight(): number {
 //      it "is only actually used in the global Avatar Scene" is wrong.
 //   2. expressionTriggerId must be a FULL URN. The bare id that triggerEmote()
 //      takes renders a frozen avatar in the rest pose, and says nothing.
-const ghosts = new Map<string, Entity>()
+const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
+
+/**
+ * The name floats at head height and a little above.
+ *
+ * fontSize was 2 against a TextShape default of 10, four metres from the
+ * camera, and facing away - three reasons a name that was supposed to make
+ * these people rather than props was not visible in a single photograph.
+ */
+const LABEL_HEIGHT = 2.4
+const LABEL_SIZE = 5
 
 /**
  * Put the builders on the stage, replacing whoever was there.
@@ -395,7 +407,12 @@ function showGhosts(chain: Link[]) {
   clearGhosts()
   for (const slot of ghostPlan(chain)) {
     const ghost = engine.addEntity()
-    Transform.create(ghost, { position: Vector3.create(slot.x, 0.3, slot.z) })
+    Transform.create(ghost, {
+      position: Vector3.create(slot.x, 0.3, slot.z),
+      // Turned inward, so the builders face the visitor instead of showing them
+      // their backs - which is what the first photographs of this found.
+      rotation: Quaternion.fromEulerDegrees(0, slot.yaw, 0)
+    })
     AvatarShape.create(ghost, {
       id: `ghost:${slot.user}`,
       name: slot.name,
@@ -409,10 +426,18 @@ function showGhosts(chain: Link[]) {
     // The client draws no floating nametag for a scene AvatarShape - only for
     // real players - so the name that makes this a person rather than a prop
     // has to be drawn by the scene.
+    //
+    // Its own entity in world space, not a child of the avatar: a Billboard
+    // turns an entity to face the camera, and composing that with a parent that
+    // is itself now rotated is a question no photograph has answered. Unparented
+    // it has one owner and one rotation.
     const label = engine.addEntity()
-    Transform.create(label, { position: Vector3.create(0, 2.4, 0), parent: ghost })
-    TextShape.create(label, { text: slot.name, fontSize: 2 })
-    ghosts.set(slot.user, ghost)
+    Transform.create(label, { position: Vector3.create(slot.x, LABEL_HEIGHT, slot.z) })
+    TextShape.create(label, { text: slot.name, fontSize: LABEL_SIZE })
+    // BM_Y so the name turns to the visitor but stays upright rather than
+    // tipping to meet the camera's pitch.
+    Billboard.create(label, { billboardMode: BillboardMode.BM_Y })
+    ghosts.set(slot.user, { avatar: ghost, label })
   }
 }
 
@@ -424,7 +449,7 @@ function ghostPerform(user: string, emote: number) {
   const ghost = ghosts.get(user)
   const id = EMOTES[emote]?.id
   if (!ghost || !id) return
-  const shape = AvatarShape.getMutable(ghost)
+  const shape = AvatarShape.getMutable(ghost.avatar)
   shape.expressionTriggerId = EMOTE_URN + id
   shape.expressionTriggerTimestamp = Date.now()
 }
@@ -432,14 +457,19 @@ function ghostPerform(user: string, emote: number) {
 /** Everyone at once, when the record has finished replaying. */
 function ghostsCheer() {
   for (const ghost of ghosts.values()) {
-    const shape = AvatarShape.getMutable(ghost)
+    const shape = AvatarShape.getMutable(ghost.avatar)
     shape.expressionTriggerId = EMOTE_URN + CHEER_EMOTE
     shape.expressionTriggerTimestamp = Date.now()
   }
 }
 
 function clearGhosts() {
-  for (const ghost of ghosts.values()) engine.removeEntityWithChildren(ghost)
+  for (const ghost of ghosts.values()) {
+    engine.removeEntityWithChildren(ghost.avatar)
+    // The label is nobody's child now, so it has to be removed by name or it
+    // outlives the builder and the stage fills with orphaned names.
+    engine.removeEntity(ghost.label)
+  }
   ghosts.clear()
 }
 

@@ -50,11 +50,23 @@ export const WEARABLES = [
  */
 export const MAX_GHOSTS = 6
 
-/** The far arc, in radians: sin is positive, so every ghost stands at z > centre. */
-const ARC_FROM = Math.PI * 0.18
-const ARC_TO = Math.PI * 0.82
+/**
+ * The arc the builders stand on, in radians, measured about the stage centre.
+ *
+ * Photographed on the deployed World 2026-09-04, the old full-width arc
+ * (0.18pi..0.82pi) put a pair of builders at its two extremes - the worst case
+ * for the commonest record. One landed behind the pad grid, which is drawn in
+ * screen space over the right of the view in landscape, and was 90% hidden.
+ *
+ * So the arc is now the stage's LEFT rear as the visitor sees it. +X is screen
+ * right (the hidden ghost was the +X one), the pad grid owns that side, and the
+ * visitor's own avatar stands on the camera axis at the middle - which leaves
+ * exactly this wedge free in both orientations.
+ */
+const ARC_FROM = Math.PI * 0.55
+const ARC_TO = Math.PI * 0.95
 
-export type GhostSlot = { user: string; name: string; x: number; z: number }
+export type GhostSlot = { user: string; name: string; x: number; z: number; yaw: number }
 
 /**
  * Who stands where.
@@ -77,13 +89,33 @@ export function ghostPlan(
   }
   const people = [...seen].map(([user, name]) => ({ user, name }))
   return people.map((p, i) => {
-    // One builder stands centre stage rather than at the end of an arc of one.
+    // One builder stands in the middle of the wedge rather than at the end of
+    // an arc of one.
     const t = people.length > 1 ? i / (people.length - 1) : 0.5
     const angle = ARC_FROM + (ARC_TO - ARC_FROM) * t
     return {
       ...p,
       x: center.x + Math.cos(angle) * radius,
-      z: center.z + Math.sin(angle) * radius
+      z: center.z + Math.sin(angle) * radius,
+      yaw: facing(angle)
     }
   })
+}
+
+/**
+ * The yaw, in degrees, that turns a ghost inward to face the stage centre - and
+ * so the visitor standing on it.
+ *
+ * Transform carries no rotation until this existed, and identity points an
+ * avatar at +Z. The visitor arrives looking along +Z too (scene.json aims the
+ * camera at z=12), so every builder stood with their back to the person who
+ * came to see them. A wall of backs is the opposite of the thing this feature
+ * is for.
+ *
+ * Decentraland's space is left-handed with Y up, so a yaw of theta points an
+ * entity along (sin theta, cos theta); solving that for the inward direction
+ * (-cos angle, -sin angle) is the atan2 below.
+ */
+export function facing(angle: number): number {
+  return (Math.atan2(-Math.cos(angle), -Math.sin(angle)) * 180) / Math.PI
 }
