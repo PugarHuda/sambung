@@ -66,8 +66,12 @@ export const MAX_GHOSTS = 6
 const ARC_FROM = Math.PI * 0.55
 const ARC_TO = Math.PI * 0.95
 
-/** How far apart people stand, in metres, until the wedge runs out of room. */
-const SPACING = 1.6
+/**
+ * How far apart people stand, in metres, until the wedge runs out of room.
+ * Wide enough that the floating names beside each head do not run into one
+ * another, which at 1.6 they did.
+ */
+const SPACING = 2.0
 
 export type GhostSlot = { user: string; name: string; x: number; z: number; yaw: number }
 

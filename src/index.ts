@@ -387,14 +387,21 @@ function highlight(): number {
 const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
 
 /**
- * The name floats at head height and a little above.
+ * The name floats a little above head height.
  *
- * fontSize was 2 against a TextShape default of 10, four metres from the
- * camera, and facing away - three reasons a name that was supposed to make
- * these people rather than props was not visible in a single photograph.
+ * Photographed twice to land on these numbers. At fontSize 2, parented to the
+ * avatar and facing away, it rendered nothing at all. At 5, billboarded, it
+ * rendered a banner half as tall as the person it named, and two builders
+ * standing together had names that overlapped into gibberish.
+ *
+ * White on a pale sky also washed out completely, so the ink is opaque and
+ * carries a dark outline - the same problem, and the same fix, as the pad
+ * labels in contrast.ts.
  */
 const LABEL_HEIGHT = 2.4
-const LABEL_SIZE = 5
+const LABEL_SIZE = 2
+/** Long enough for a real name, short enough that neighbours do not collide. */
+const LABEL_CHARS = 12
 
 /**
  * Put the builders on the stage, replacing whoever was there.
@@ -433,7 +440,13 @@ function showGhosts(chain: Link[]) {
     // it has one owner and one rotation.
     const label = engine.addEntity()
     Transform.create(label, { position: Vector3.create(slot.x, LABEL_HEIGHT, slot.z) })
-    TextShape.create(label, { text: slot.name, fontSize: LABEL_SIZE })
+    TextShape.create(label, {
+      text: clampText(slot.name, LABEL_CHARS),
+      fontSize: LABEL_SIZE,
+      textColor: Color4.White(),
+      outlineColor: Color3.fromHexString('#14121F'),
+      outlineWidth: 0.2
+    })
     // BM_Y so the name turns to the visitor but stays upright rather than
     // tipping to meet the camera's pitch.
     Billboard.create(label, { billboardMode: BillboardMode.BM_Y })
