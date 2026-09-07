@@ -405,25 +405,28 @@ function highlight(): number {
 const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
 
 /**
- * The name floats above the pillars, in dark ink.
+ * The name floats above the pillars, in the ink that is known to draw.
  *
- * The four-variant label spike settled this on 2026-09-07. Every variant
- * rendered, so "fontSize 2 draws nothing" was a misreading - size 2 is small
- * but perfectly legible, and size 5 was the banner half as tall as the person.
- * The variant with no colour props and the one with explicit white were
- * pixel-alike, which says the default ink is already white, and white on this
- * client's pale daylight sky is very nearly invisible. A dark outline at 0.2
- * did not rescue it either.
+ * The four-variant spike of 2026-09-07 overturned the reason it was changed:
+ * every variant rendered, so "fontSize 2 draws nothing" was a misreading of a
+ * photograph. Size 2 is small but legible, and size 5 was the banner half as
+ * tall as the person it named. Nothing was ever broken here.
  *
- * So the ink is inverted instead: dark letters, light outline - the same lever,
- * and the same reasoning, as the pad labels in contrast.ts. The height comes
- * from the spike too: its labels sat at 3.4 and photographed against clean sky,
- * while 2.4 put the name across a pillar, where no single ink can win.
+ * What the spike could NOT settle is whether outlineWidth does anything on this
+ * client. Two readings of the same frames survive - that the outline is the only
+ * part which draws and the pale fill vanishes into the sky, or that the outline
+ * is ignored entirely - and they disagree about every value except the one
+ * already photographed. Inverting to dark ink with a light outline was tried on
+ * the strength of the first reading and came back invisible, which fits the
+ * second. Settling it needs another spike deploy, and a floating nametag two
+ * days before the freeze does not earn one.
+ *
+ * So this is the combination photographed as legible, at the height the spike's
+ * own labels proved sits against clean sky rather than across a pillar.
+ * ponytail: outlineWidth is unmeasured, not tuned. Spike it after judging.
  */
 const LABEL_HEIGHT = 3.4
 const LABEL_SIZE = 2
-/** The stage's own near-black, so the name belongs to the scene and not the sky. */
-const LABEL_INK = Color4.fromHexString('#14121FFF')
 /** Long enough for a real name, short enough that neighbours do not collide. */
 const LABEL_CHARS = 12
 
@@ -467,9 +470,9 @@ function showGhosts(chain: Link[]) {
     TextShape.create(label, {
       text: clampText(slot.name, LABEL_CHARS),
       fontSize: LABEL_SIZE,
-      textColor: LABEL_INK,
-      outlineColor: Color3.White(),
-      outlineWidth: 0.3
+      textColor: Color4.White(),
+      outlineColor: Color3.fromHexString('#14121F'),
+      outlineWidth: 0.2
     })
     // BM_Y so the name turns to the visitor but stays upright rather than
     // tipping to meet the camera's pitch.
