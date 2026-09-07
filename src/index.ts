@@ -421,11 +421,19 @@ const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
  * second. Settling it needs another spike deploy, and a floating nametag two
  * days before the freeze does not earn one.
  *
- * So this is the combination photographed as legible, at the height the spike's
- * own labels proved sits against clean sky rather than across a pillar.
- * ponytail: outlineWidth is unmeasured, not tuned. Spike it after judging.
+ * The height was moved to 3.4 on the same reasoning and photographed as clean
+ * sky - no name at all, in either ink. Raising it was therefore ALSO a guess,
+ * and the second one to fail, so it goes back too. Every part of this constant
+ * is now exactly what was photographed legible on 2026-09-04, and nothing here
+ * rests on a theory that a camera has not seen.
+ *
+ * ponytail: three settings and one photograph each cannot separate height from
+ * ink from outline. The spike that would - all three varied at once, placed
+ * LEFT of centre where the screen-space pad grid cannot occlude it, which is
+ * what cost the 09-07 spike its fourth answer - is worth one deploy AFTER
+ * judging, and is not worth one before it for a floating nametag.
  */
-const LABEL_HEIGHT = 3.4
+const LABEL_HEIGHT = 2.4
 const LABEL_SIZE = 2
 /** Long enough for a real name, short enough that neighbours do not collide. */
 const LABEL_CHARS = 12
