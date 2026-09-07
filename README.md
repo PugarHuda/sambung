@@ -83,13 +83,14 @@ the only way to know what a judge's phone did.
 ```bash
 npm install
 npm start           # local preview
-npm test            # 89 unit, contract, schema, layout and bundle-boot tests
+npm test            # 104 unit, contract, schema, layout and bundle-boot tests
 npm run budget      # triangle, asset and audio budget
 npm run test:e2e    # 61 Playwright tests against the live endpoint, 5 browser engines
 npm run lint        # eslint, type-aware
 npm run sound       # regenerate sounds/pad.wav from scripts/make-sound.mjs
 npm run serve       # the record endpoint on localhost, against the real store
 npm run notes       # what real devices reported: arrivals, first taps, records, errors
+npm run qa          # play the live World in a real Decentraland client
 ```
 
 Use the preview on an actual phone on the same network. Desktop lies about both
@@ -107,6 +108,21 @@ The test suite is deliberately layered:
 | `e2e/note-api.spec.ts`       | The beacon: shape allow-list, clamping, and that nothing personal is kept  |
 | `e2e/abuse.spec.ts`          | A caller that writes like a loop is cut off; runs last, alone              |
 | `e2e/deployed-world.spec.ts` | Whether the World actually serves what this repo says it does              |
+| `e2e/live-client.spec.ts`    | Whether a person can load the World and press a pad at all                 |
+
+`npm run qa` is the only suite that plays the game rather than inspecting it. It drives
+the Bevy web client against the live World and proves the whole chain — browser, client,
+our bundle, the scene's own `fetch`, our endpoint — by waiting for a beacon that did not
+exist before the run. It then samples the eight pad colours at the exact coordinates it
+is about to click, because the beacon alone cannot pin the layout: a click that misses
+the grid falls through to the 3D world onto a tappable pillar, so a misplaced grid would
+still look like a pass.
+
+It exists because every layout defect this project has shipped was found by a human
+looking at a photograph, and none of them would have failed a test — builders facing away
+from the visitor, a pad grid drawn at a fifth of its size, and an opening replay that
+finished behind the client's loading curtain. It needs a real GPU, so it is headed, runs
+in about 40 seconds, and is not in CI.
 
 The endpoint can be proven before a deployment slot is spent on it — Vercel's free plan
 caps deployments per day, and this project has hit that cap with a fix ready twice:
