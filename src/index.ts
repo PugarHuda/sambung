@@ -435,6 +435,8 @@ const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
  */
 const LABEL_HEIGHT = 2.4
 const LABEL_SIZE = 2
+/** The stage's own near-black, which the pale sky cannot swallow. */
+const LABEL_INK = Color4.fromHexString('#14121FFF')
 /** Long enough for a real name, short enough that neighbours do not collide. */
 const LABEL_CHARS = 12
 
@@ -478,9 +480,12 @@ function showGhosts(chain: Link[]) {
     TextShape.create(label, {
       text: clampText(slot.name, LABEL_CHARS),
       fontSize: LABEL_SIZE,
-      textColor: Color4.White(),
-      outlineColor: Color3.fromHexString('#14121F'),
-      outlineWidth: 0.2
+      // Dark, and nothing else changed. Across three deploys the name was only
+      // ever legible where a pillar happened to stand behind it - white letters
+      // on a pale sky are invisible everywhere else, and the sky is most of the
+      // background. No outline: an earlier attempt moved the ink AND the height
+      // AND the outline together and could not say which one lost the name.
+      textColor: LABEL_INK
     })
     // BM_Y so the name turns to the visitor but stays upright rather than
     // tipping to meet the camera's pitch.
