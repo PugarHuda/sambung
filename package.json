@@ -1,7 +1,7 @@
 {
   "name": "sambung",
   "version": "1.0.0",
-  "description": "Sambung \u2014 mobile-first Simon-says played with Decentraland avatar emotes.",
+  "description": "Sambung — mobile-first Simon-says played with Decentraland avatar emotes.",
   "license": "MIT",
   "scripts": {
     "start": "sdk-commands start",
@@ -17,7 +17,8 @@
     "sound": "node scripts/make-sound.mjs",
     "verify": "playwright test --project=deployed",
     "serve": "node scripts/serve-endpoint.mjs",
-    "notes": "node scripts/notes.mjs"
+    "notes": "node scripts/notes.mjs",
+    "qa": "playwright test --project=client"
   },
   "devDependencies": {
     "@dcl/js-runtime": "7.26.0",

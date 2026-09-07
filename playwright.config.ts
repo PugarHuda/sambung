@@ -6,6 +6,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const LIVE_WORLD = '**/deployed-world.spec.ts'
 const ABUSE = '**/abuse.spec.ts'
+const CLIENT = '**/live-client.spec.ts'
 const BROWSERS = ['chromium', 'firefox', 'webkit', 'mobile-chrome', 'mobile-safari']
 
 export default defineConfig({
@@ -26,7 +27,7 @@ export default defineConfig({
     // to none of them - so the widest net is the honest one.
     ...BROWSERS.map((name, i) => ({
       name,
-      testIgnore: [LIVE_WORLD, ABUSE],
+      testIgnore: [LIVE_WORLD, ABUSE, CLIENT],
       use: {
         ...[
           devices['Desktop Chrome'],
@@ -48,6 +49,29 @@ export default defineConfig({
     },
     // Assertions about the deployed World, which are only true after a deploy.
     // Kept out of the default run and out of CI; `npm run verify` is the caller.
-    { name: 'deployed', testMatch: LIVE_WORLD, use: { ...devices['Desktop Chrome'] } }
+    { name: 'deployed', testMatch: LIVE_WORLD, use: { ...devices['Desktop Chrome'] } },
+    // The only suite that plays the game in a real client. Headed on purpose:
+    // the Bevy client needs WebGPU and headless-shell exposes no adapter, so
+    // this cannot run on a CI runner and is not asked to. The viewport is
+    // pinned because the pad coordinates it clicks are only true at 1920x1200.
+    {
+      name: 'client',
+      testMatch: CLIENT,
+      timeout: 600_000,
+      retries: 0,
+      use: {
+        ...devices['Desktop Chrome'],
+        headless: false,
+        viewport: { width: 1920, height: 1200 },
+        launchOptions: {
+          args: [
+            '--enable-unsafe-webgpu',
+            '--enable-features=Vulkan,WebGPU',
+            '--ignore-gpu-blocklist',
+            '--use-angle=default'
+          ]
+        }
+      }
+    }
   ]
 })
