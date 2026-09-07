@@ -112,6 +112,21 @@ let endedTimer = 0
 const DEMO_MAX = 12
 let demoIdx = -1
 let demoTimer = 0
+/**
+ * The replay is the pitch, and on a real client it plays to an empty theatre.
+ *
+ * Photographed 2026-09-07: the scene reached "That was the record" in the very
+ * first frame the player could see, because the client holds an "Entering
+ * Decentraland" curtain up for tens of seconds after the scene starts running.
+ * That, and not a mistimed camera, is why three earlier attempts to film the
+ * ghosts performing came back with nothing.
+ *
+ * So it loops, like an arcade attract reel, and the existing shouldPlayDemo
+ * gate already says exactly when to stop: the visitor tapped, or a live chain
+ * arrived from a peer.
+ */
+const REPLAY_GAP = 6
+let replayTimer = REPLAY_GAP
 /** Set by the first accepted tap. The record reply may arrive long after it. */
 let played = false
 let flashIdx = -1
@@ -313,15 +328,18 @@ function demoRunning(): boolean {
 
 function stopDemo() {
   demoIdx = -1
+  replayTimer = REPLAY_GAP
 }
 
-function startDemo() {
+function startDemo(rebuild = true) {
   if (known.record === 0) return
   demoIdx = 0
   demoTimer = 0
   // The people who built it, standing on the stage. A solo visitor watches the
   // record performed by its actual builders rather than reading their names.
-  showGhosts(known.chain)
+  // On a replay they are already standing there; rebuilding would make the
+  // client re-resolve every wearable and pop the avatars every few seconds.
+  if (rebuild) showGhosts(known.chain)
   const first = known.chain[0]
   if (first) ghostPerform(first.user, first.emote)
 }
@@ -387,19 +405,25 @@ function highlight(): number {
 const ghosts = new Map<string, { avatar: Entity; label: Entity }>()
 
 /**
- * The name floats a little above head height.
+ * The name floats above the pillars, in dark ink.
  *
- * Photographed twice to land on these numbers. At fontSize 2, parented to the
- * avatar and facing away, it rendered nothing at all. At 5, billboarded, it
- * rendered a banner half as tall as the person it named, and two builders
- * standing together had names that overlapped into gibberish.
+ * The four-variant label spike settled this on 2026-09-07. Every variant
+ * rendered, so "fontSize 2 draws nothing" was a misreading - size 2 is small
+ * but perfectly legible, and size 5 was the banner half as tall as the person.
+ * The variant with no colour props and the one with explicit white were
+ * pixel-alike, which says the default ink is already white, and white on this
+ * client's pale daylight sky is very nearly invisible. A dark outline at 0.2
+ * did not rescue it either.
  *
- * White on a pale sky also washed out completely, so the ink is opaque and
- * carries a dark outline - the same problem, and the same fix, as the pad
- * labels in contrast.ts.
+ * So the ink is inverted instead: dark letters, light outline - the same lever,
+ * and the same reasoning, as the pad labels in contrast.ts. The height comes
+ * from the spike too: its labels sat at 3.4 and photographed against clean sky,
+ * while 2.4 put the name across a pillar, where no single ink can win.
  */
-const LABEL_HEIGHT = 2.4
+const LABEL_HEIGHT = 3.4
 const LABEL_SIZE = 2
+/** The stage's own near-black, so the name belongs to the scene and not the sky. */
+const LABEL_INK = Color4.fromHexString('#14121FFF')
 /** Long enough for a real name, short enough that neighbours do not collide. */
 const LABEL_CHARS = 12
 
@@ -443,9 +467,9 @@ function showGhosts(chain: Link[]) {
     TextShape.create(label, {
       text: clampText(slot.name, LABEL_CHARS),
       fontSize: LABEL_SIZE,
-      textColor: Color4.White(),
-      outlineColor: Color3.fromHexString('#14121F'),
-      outlineWidth: 0.2
+      textColor: LABEL_INK,
+      outlineColor: Color3.White(),
+      outlineWidth: 0.3
     })
     // BM_Y so the name turns to the visitor but stays upright rather than
     // tipping to meet the camera's pitch.
@@ -786,44 +810,9 @@ function watchArrivals() {
   })
 }
 
-/**
- * Four questions about a floating name, asked at once.
- *
- * A deploy that changed fontSize 5 -> 2 AND added textColor AND outlineColor AND
- * outlineWidth in one go turned the ghost labels from "far too big" to "not
- * drawn at all", and four changes in one deploy cannot say which one did it.
- * Every answer costs a wallet signature, so this asks all four together the way
- * the 2026-08-31 avatar spike did.
- *
- * A: the known-good control - the size that definitely rendered, no colour props
- * B: size alone, no colour props
- * C: the control plus textColor
- * D: the control plus the outline
- *
- * Photograph once at 1920x1200 and read which of the four is legible.
- *
- * ponytail: temporary. Delete with the answer, and put the winning combination
- * on LABEL_SIZE and the TextShape in showGhosts.
- */
-function labelSpike() {
-  const variants: [string, Partial<ReturnType<typeof TextShape.create>>][] = [
-    ['A size5', { fontSize: 5 }],
-    ['B size2', { fontSize: 2 }],
-    ['C ink', { fontSize: 5, textColor: Color4.White() }],
-    ['D outline', { fontSize: 5, outlineColor: Color3.fromHexString('#14121F'), outlineWidth: 0.2 }]
-  ]
-  variants.forEach(([name, props], i) => {
-    const e = engine.addEntity()
-    Transform.create(e, { position: Vector3.create(5 + i * 2, 3.4, 12.5) })
-    TextShape.create(e, { text: name, ...props })
-    Billboard.create(e, { billboardMode: BillboardMode.BM_Y })
-  })
-}
-
 export function main() {
   clearMobileHud()
   buildStage()
-  labelSpike()
   setupUi({
     state,
     highlight,
@@ -883,6 +872,11 @@ export function main() {
     if (tickDemo(dt)) {
       syncPillars()
       return
+    }
+    // Nobody has taken the stage yet, so the builders perform it again.
+    if (shouldPlayDemo(known.record, played, state.chain.length)) {
+      replayTimer -= dt
+      if (replayTimer <= 0) startDemo(false)
     }
     tick(state, dt)
     if (prevChain > 0 && state.chain.length === 0) {
