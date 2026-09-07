@@ -300,8 +300,16 @@ function weeklyTarget(): string {
  * is the one the header shows whenever the endpoint has told us about a week.
  */
 function target(): { label: string; n: number } {
-  if (known.week) return { label: "WEEK'S BEST", n: known.week.record }
-  return { label: 'RECORD', n: state.record }
+  // A week nobody has opened yet is not a target. The ISO week rolled over on
+  // 2026-09-07 and the header read "WEEK'S BEST 0" while the ghosts were on
+  // stage performing a five - the largest number on screen was a zero at the
+  // exact moment the scene was showing off what it can do. So an empty week
+  // falls back to the record the visitor just watched, and the weekly framing
+  // returns the moment somebody actually sets a chain.
+  if (known.week && known.week.record > 0) return { label: "WEEK'S BEST", n: known.week.record }
+  // The endpoint's record and this session's are both real; a player who has
+  // just beaten the stored one should see their own number, not the old one.
+  return { label: 'RECORD', n: Math.max(known.record, state.record) }
 }
 
 /** Distinct builders in the order they first appear, for "built by Ana, Bo and 3 more". */

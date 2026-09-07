@@ -412,6 +412,40 @@ test(
   }
 )
 
+test(
+  'a week nobody has opened yet does not put a zero at the top of the screen',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    // The ISO week rolls over while the all-time record stands, and on
+    // 2026-09-07 that put "WEEK'S BEST 0" in the largest text on screen while
+    // the ghosts below it were performing a five. The header has to show the
+    // number the visitor just watched, not the empty one.
+    const { scene, host } = boot({ realmName: 'rainbowroad.dcl.eth' }, undefined, {
+      record: 5,
+      chain: [
+        { emote: 0, user: 'a', name: 'Ana' },
+        { emote: 1, user: 'b', name: 'Bo' },
+        { emote: 2, user: 'a', name: 'Ana' },
+        { emote: 3, user: 'b', name: 'Bo' },
+        { emote: 4, user: 'a', name: 'Ana' }
+      ],
+      week: { record: 0, chain: [] }
+    })
+    await scene.onStart?.()
+    for (let frame = 0; frame < 120; frame++) await scene.onUpdate?.(1 / 60)
+
+    const d = decoder()
+    const labels = decoded(inventory(host.frames, d), UI_TEXT, (b) => d.PBUiText.decode(b).value)
+    const header = labels.find((l) => l.includes('LIVES'))
+    assert.ok(header, `no header reached the renderer; labels were ${labels.join(' | ')}`)
+    assert.ok(
+      !header.startsWith("WEEK'S BEST 0"),
+      `an empty week is being shown as the target: "${header}"`
+    )
+    assert.ok(header.startsWith('RECORD 5'), `the standing record is not the target: "${header}"`)
+  }
+)
+
 /**
  * Every emote an AvatarShape was ever told to perform, in order.
  *
