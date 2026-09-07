@@ -41,7 +41,7 @@ type Canvas = { width: number; height: number; screenInsetArea?: Rect; interacta
  * Nothing on the wire, unless a canvas is given: then the first reply from the
  * renderer carries UiCanvasInformation, exactly as a client would send it.
  */
-function boot(realm: Realm, canvas?: Canvas): { scene: Scene; host: Host } {
+function boot(realm: Realm, canvas?: Canvas, snapshot?: unknown): { scene: Scene; host: Host } {
   const host: Host = {
     crdtCalls: 0,
     frames: [],
@@ -119,7 +119,8 @@ function boot(realm: Realm, canvas?: Canvas): { scene: Scene; host: Host } {
       return Promise.resolve({
         ok: true,
         status: 200,
-        json: () => Promise.resolve({ record: 0, chain: [], week: { record: 0, chain: [] } })
+        json: () =>
+          Promise.resolve(snapshot ?? { record: 0, chain: [], week: { record: 0, chain: [] } })
       })
     },
     setTimeout,
@@ -396,6 +397,65 @@ test(
     assert.ok(
       labels.some((l) => l.startsWith('TAP A PAD')),
       `the opening prompt is missing; labels were ${labels.join(' | ')}`
+    )
+  }
+)
+
+/**
+ * Every emote an AvatarShape was ever told to perform, in order.
+ *
+ * inventory() keeps only the last value of each component, which is precisely
+ * what a replay is invisible to: the loop writes the same entity again and
+ * again, and only the sequence says whether it came round.
+ */
+function ghostEmotes(frames: Uint8Array[], d: Decoder): string[] {
+  const out: string[] = []
+  for (const frame of frames) {
+    const buf = new d.ReadWriteByteBuffer(frame)
+    for (;;) {
+      const msg = d.readMessage(buf)
+      if (!msg) break
+      if (msg.type !== PUT_COMPONENT || msg.componentId !== AVATAR_SHAPE || !msg.data) continue
+      const emote = d.PBAvatarShape.decode(msg.data).expressionTriggerId
+      if (emote) out.push(emote)
+    }
+  }
+  return out
+}
+
+test(
+  'the record replays on a loop until somebody takes the stage',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    // The client holds an "Entering Decentraland" curtain up for tens of seconds
+    // after the scene starts running, so a replay that ran once was over before
+    // the visitor could see anything - photographed 2026-09-07, the first
+    // visible frame already read "That was the record". It loops now, and this
+    // is the check that it neither stops after one pass nor restarts every
+    // frame, which would be a strobe rather than a performance.
+    const chain = [
+      { emote: 0, user: 'a', name: 'Ana' },
+      { emote: 1, user: 'b', name: 'Bo' },
+      { emote: 2, user: 'a', name: 'Ana' }
+    ]
+    const { scene, host } = boot({ realmName: 'rainbowroad.dcl.eth' }, undefined, {
+      record: 3,
+      chain,
+      week: { record: 0, chain: [] }
+    })
+    await scene.onStart?.()
+    // Long enough for the first pass, the gap, and at least one more pass.
+    for (let frame = 0; frame < 30 * 40; frame++) await scene.onUpdate?.(1 / 30)
+
+    const d = decoder()
+    const starts = ghostEmotes(host.frames, d).filter((e) => e.endsWith(EMOTES[0].id))
+    assert.ok(
+      starts.length >= 2,
+      `the replay never came round again: ${starts.length} openings in 40s`
+    )
+    assert.ok(
+      starts.length <= 12,
+      `the replay restarted ${starts.length} times in 40s, which is a strobe, not a performance`
     )
   }
 )
