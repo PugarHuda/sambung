@@ -245,6 +245,14 @@ type Decoder = {
   PBMeshRenderer: { decode: (d: Uint8Array) => { mesh?: { $case: string } } }
   PBAudioSource: { decode: (d: Uint8Array) => { audioClipUrl: string; pitch?: number } }
   PBUiText: { decode: (d: Uint8Array) => { value: string } }
+  PBTextShape: {
+    decode: (d: Uint8Array) => {
+      text: string
+      fontSize?: number
+      textColor?: { r: number; g: number; b: number; a: number }
+      outlineWidth?: number
+    }
+  }
   PBAvatarShape: {
     decode: (d: Uint8Array) => {
       id: string
@@ -261,6 +269,8 @@ const MESH_RENDERER = 1018
 const AUDIO_SOURCE = 1020
 const UI_TEXT = 1052
 const AVATAR_SHAPE = 1080
+const TEXT_SHAPE = 1030
+const TRANSFORM = 1
 const POINTER_EVENTS = 1062
 const UI_TRANSFORM = 1050
 const UI_CANVAS_INFORMATION = 1054
@@ -285,6 +295,7 @@ function decoder(): Decoder {
         export { PBAudioSource } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/audio_source.gen'
         export { PBUiText } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/ui_text.gen'
         export { PBAvatarShape } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/avatar_shape.gen'
+        export { PBTextShape } from '@dcl/ecs/dist/components/generated/pb/decentraland/sdk/components/text_shape.gen'
       `,
       resolveDir: process.cwd(),
       loader: 'ts'
@@ -456,6 +467,57 @@ test(
     assert.ok(
       starts.length <= 12,
       `the replay restarted ${starts.length} times in 40s, which is a strobe, not a performance`
+    )
+  }
+)
+
+test(
+  'every builder on the stage is given a name to float above them',
+  { skip: !existsSync(BUNDLE) },
+  async () => {
+    // The name has now silently vanished from three separate deploys - once by
+    // being parented to an avatar facing away, twice by an ink change - and
+    // nothing in the suite noticed, because every check was a photograph. This
+    // reads the wire instead: the label either reaches the renderer with the
+    // builder's name on it, or it does not.
+    //
+    // What a photograph still owns is whether the client DRAWS it. That is a
+    // different question, and an open one (see LABEL_HEIGHT in index.ts).
+    const chain = [
+      { emote: 0, user: 'a', name: 'Ana' },
+      { emote: 1, user: 'b', name: 'Bo' }
+    ]
+    const { scene, host } = boot({ realmName: 'rainbowroad.dcl.eth' }, undefined, {
+      record: 2,
+      chain,
+      week: { record: 0, chain: [] }
+    })
+    await scene.onStart?.()
+    for (let frame = 0; frame < 120; frame++) await scene.onUpdate?.(1 / 60)
+
+    const d = decoder()
+    const put = inventory(host.frames, d)
+    const ghosts = decoded(put, AVATAR_SHAPE, (b) => d.PBAvatarShape.decode(b))
+    const labels = decoded(put, TEXT_SHAPE, (b) => d.PBTextShape.decode(b))
+    assert.equal(ghosts.length, 2, 'the record has two builders, so two should be standing')
+    assert.equal(
+      labels.length,
+      ghosts.length,
+      `every builder needs a name: ${ghosts.length} builders, ${labels.length} labels`
+    )
+    assert.deepEqual(
+      labels.map((l) => l.text).sort(),
+      ['Ana', 'Bo'],
+      'the labels must carry the builders own names'
+    )
+    // A label rendered at the ghost's own feet would be inside the avatar. It
+    // has to clear a person's head, and it is drawn in world space.
+    const heights = [...(put.get(TRANSFORM) ?? new Map<number, Uint8Array>()).values()]
+      .map((b) => new DataView(b.buffer, b.byteOffset, b.byteLength).getFloat32(4, true))
+      .filter((y) => y > 1.9)
+    assert.ok(
+      heights.length >= labels.length,
+      `no entity sits above head height: ${heights.join(', ')}`
     )
   }
 )
