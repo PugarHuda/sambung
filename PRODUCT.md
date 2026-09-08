@@ -86,9 +86,10 @@ Terminology: _chain_ (the sequence), _link_ (one emote in it), _record_ (longest
 repeated), _week's best_, _season_ (a chain's life until it dies), _builder_ (a player who
 added a link).
 
-Undecided: whether the record replay is performed by ghost avatars of its builders
-(`AvatarShape` spike shipped 2026-08-28, awaiting a phone test) or stays as lights and
-names.
+Settled 2026-09-04: the record replay **is** performed by avatars of its builders, each
+standing on the stage and emoting the link they added. `AvatarShape` renders inside a
+normal scene, contrary to the proto comment, and was photographed doing so on the live
+World.
 
 ## Brand Commitments
 

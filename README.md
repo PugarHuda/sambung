@@ -37,10 +37,17 @@ listed in Decentraland Places.
 
 ## Why it works when nobody else is around
 
-Walk in and the record introduces itself: the best chain this World has ever held replays
-across the pads, crediting the player behind each link, before you are asked for anything.
-You watch what the record _is_, then start your own chain at one and chase it. Any tap
-skips the replay — it is a welcome, never a memory test, and never a wall.
+Walk in and the record introduces itself. The players who built the best chain this World
+has ever held stand on the stage as their own avatars, and each performs the link they
+actually added, in order, before you are asked for anything. You watch what the record
+_is_, and who built it, then start your own chain at one and chase it. It replays on a
+loop, because the client's "Entering Decentraland" curtain can outlast a single
+performance, and a welcome nobody saw is not a welcome. Any tap ends it — never a memory
+test, and never a wall.
+
+Each builder is sent a name to float above them. The Bevy web client declines to draw it.
+The wire is asserted in `src/bundle.test.ts` rather than photographed, so if the mobile
+app draws a nametag for a scene `AvatarShape`, the names are already on it.
 
 Judging happens one visitor at a time, so a game that needs four players is a game that
 scores zero. Sambung is playable solo from the first tap. When someone else walks in, the
@@ -157,6 +164,7 @@ the result, and confirm the World's access is **Public**.
 | `src/net.ts`                 | Timeout and retry policy, with the clock injected.                    |
 | `src/contrast.ts`            | WCAG luminance maths that picks each pad's label ink.                 |
 | `src/audio.ts`               | The pitch table: one clip, eight voices.                              |
+| `src/ghosts.ts`              | Who stands where on the stage, and the URNs an avatar needs.          |
 | `src/layout.ts`              | Portrait or landscape, inside the frame the renderer reports.         |
 | `scripts/serve-endpoint.mjs` | The endpoint on localhost, for proving it before a deploy.            |
 | `src/ui.tsx`                 | The thumb-zone pad grid and the status header.                        |
@@ -168,11 +176,6 @@ the result, and confirm the World's access is **Public**.
 
 ## Deliberately not built
 
-- **Ghosts.** The plan is for the record replay to be performed by `AvatarShape` copies of
-  the players who built it. The SDK warns that `AvatarShape` is "only actually used in the
-  global Avatar Scene", so `src/spike-avatar.ts` exists to answer that on a real phone
-  before anything is built on top of it. If the answer is no, the record replay stays as
-  it is — lights and names.
 - **Signed writes.** The endpoint validates shape, size and monotonicity, but does not
   verify a Decentraland auth chain. A determined forger can post one fake record.
   `signedFetch` verification is the upgrade path, worth doing if the record is actually
