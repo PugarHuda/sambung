@@ -18,7 +18,8 @@
     "verify": "playwright test --project=deployed",
     "serve": "node scripts/serve-endpoint.mjs",
     "notes": "node scripts/notes.mjs",
-    "qa": "playwright test --project=client"
+    "qa": "playwright test --project=client",
+    "capture": "playwright test --project=capture"
   },
   "devDependencies": {
     "@dcl/js-runtime": "7.26.0",

@@ -98,6 +98,7 @@ npm run sound       # regenerate sounds/pad.wav from scripts/make-sound.mjs
 npm run serve       # the record endpoint on localhost, against the real store
 npm run notes       # what real devices reported: arrivals, first taps, records, errors
 npm run qa          # play the live World in a real Decentraland client
+npm run capture     # the same visit, recorded, as footage for the demo video
 ```
 
 Use the preview on an actual phone on the same network. Desktop lies about both
@@ -116,6 +117,7 @@ The test suite is deliberately layered:
 | `e2e/abuse.spec.ts`          | A caller that writes like a loop is cut off; runs last, alone              |
 | `e2e/deployed-world.spec.ts` | Whether the World actually serves what this repo says it does              |
 | `e2e/live-client.spec.ts`    | Whether a person can load the World and press a pad at all                 |
+| `e2e/capture.spec.ts`        | Nothing - it is not a test. It records a real visit as video               |
 
 `npm run qa` is the only suite that plays the game rather than inspecting it. It drives
 the Bevy web client against the live World and proves the whole chain — browser, client,
